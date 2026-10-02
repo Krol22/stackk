@@ -4,10 +4,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/krol22/stackk/internal/safe"
 	"hash/fnv"
 	"os"
 	"strconv"
+
+	"github.com/krol22/stackk/internal/safe"
 
 	"github.com/krol22/stackk/internal/store"
 	"github.com/krol22/stackk/internal/tmux"

@@ -309,27 +309,34 @@ func (a *App) Recall(slotPane string) error {
 	if err != nil || slot.Role != "slot" {
 		return err
 	}
-	panes, err := a.T.AllPanes()
-	if err != nil {
+	ui, ok, err := a.dashboard(slot.SlotOf, false)
+	if err != nil || !ok {
 		return err
 	}
-	for _, p := range panes {
-		if p.Role != "tui" || p.Dead {
-			continue
-		}
-		if stack, _ := a.T.Run("show-options", "-pqv", "-t", p.ID, "@stackk_stack"); stack == slot.SlotOf {
-			d := &Drawer{A: a, UI: p.ID, Stack: stack}
-			agent := d.Out()
-			if err := d.Close(); err != nil {
-				return err
-			}
-			if t, err := store.GetTask(a.DB, agent); err == nil && t.TmuxPane != "" {
-				a.T.Run("select-pane", "-t", t.TmuxPane)
-			}
-			return nil
-		}
+	d := &Drawer{A: a, UI: ui.ID, Stack: ui.OfStack}
+	agent := d.Out()
+	if err := d.Close(); err != nil {
+		return err
+	}
+	if t, err := store.GetTask(a.DB, agent); err == nil && t.TmuxPane != "" {
+		a.T.Run("select-pane", "-t", t.TmuxPane)
 	}
 	return nil
+}
+
+// dashboard finds a live dashboard pane showing the stack; with anyStack, an empty stack
+// matches any dashboard.
+func (a *App) dashboard(stack string, anyStack bool) (tmux.Pane, bool, error) {
+	panes, err := a.T.AllPanes()
+	if err != nil {
+		return tmux.Pane{}, false, err
+	}
+	for _, p := range panes {
+		if p.Role == "tui" && !p.Dead && (p.OfStack == stack || anyStack && stack == "") {
+			return p, true, nil
+		}
+	}
+	return tmux.Pane{}, false, nil
 }
 
 // Focus brings the user to the dashboard of the task's stack (or any dashboard) and, given a
@@ -344,22 +351,11 @@ func (a *App) Focus(taskID string) error {
 		}
 		task, stack = t, t.Stack
 	}
-	panes, err := a.T.AllPanes()
+	ui, ok, err := a.dashboard(stack, true)
 	if err != nil {
 		return err
 	}
-	var ui tmux.Pane
-	for _, p := range panes {
-		if p.Role != "tui" || p.Dead {
-			continue
-		}
-		s, _ := a.T.Run("show-options", "-pqv", "-t", p.ID, "@stackk_stack")
-		if stack == "" || s == stack {
-			ui = p
-			break
-		}
-	}
-	if ui.ID == "" {
+	if !ok {
 		return fmt.Errorf("no stackk dashboard is running")
 	}
 	// The most recently active client is the one in front of you.

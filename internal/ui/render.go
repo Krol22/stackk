@@ -9,7 +9,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/krol22/stackk/internal/safe"
-	"github.com/krol22/stackk/internal/store"
 )
 
 var (
@@ -37,24 +36,6 @@ var (
 	sButton = lipgloss.NewStyle().Foreground(cBright).Background(lipgloss.Color("#333333"))
 	sHotBtn = lipgloss.NewStyle().Foreground(lipgloss.Color("#141414")).Background(cYellow).Bold(true)
 )
-
-// ViewOf names the list a task shows up in.
-func ViewOf(t store.Task) string {
-	switch {
-	case t.HiddenAt != 0:
-		return "hidden"
-	case t.PausedAt != 0:
-		return "paused"
-	case t.Deferred:
-		return "deferred"
-	case t.RunState == store.RunExited:
-		return "exited"
-	case store.InStack(&t):
-		return "stack"
-	default:
-		return "running"
-	}
-}
 
 func agentStyle(agent string) lipgloss.Style {
 	switch agent {
