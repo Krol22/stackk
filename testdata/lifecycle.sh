@@ -10,7 +10,6 @@ source "$(dirname "$0")/lib.sh"
 rm -f "$STACKK_NOTIFY_FILE"
 
 settle() { sleep 6.5; } # > one reconcile cycle
-viewof() { state "$1" | awk '{print $1}'; }
 order() { sk ls -json | python3 -c 'import json,sys; ts=[t for t in json.load(sys.stdin) if t["view"]=="stack"]; print(" ".join(t["Name"] for t in sorted(ts, key=lambda t: t["QueuedAt"])))'; }
 send() { t send-keys -t "$(paneof "$1")" -l "$2"; t send-keys -t "$(paneof "$1")" Enter; }
 # turn_ends TASK MSG: the agent finishes its turn (what Claude's Stop hook reports), process untouched
@@ -27,6 +26,13 @@ check "the fake agent runs (not a real claude from PATH)" 't capture-pane -p -t 
 check "fresh session waits on the stack" '[ "$(state l1)" = "stack idle live" ]'
 check "finished first prompt waits on the stack" '[ "$(state l2)" = "stack idle live" ]'
 check "queue order: l1 entered first" '[ "$(order)" = "l1 l2" ]'
+
+step "a first prompt full of shell metacharacters reaches the agent unchanged (fish)"
+mkdir -p "$S/work/q1"
+TRICKY='it'"'"'s a "test" \ $HOME `date` ; echo pwned'
+sk new -stack work -name q1 "$S/work/q1" "$TRICKY" >/dev/null; settle
+check "prompt arrived exactly as typed" '[ "$(sk ls -json | python3 -c "import json,sys; print([t[\"LastMsg\"] for t in json.load(sys.stdin) if t[\"Name\"]==\"q1\"][0])")" = "reply: $TRICKY" ]'
+sk rm "$(idof q1)" >/dev/null
 
 step "prompt → running, and it stays running across reconcile cycles (and past the quiet threshold)"
 send l1 busy; settle
@@ -158,8 +164,14 @@ turn_ends l3 "seen"; sleep $((STACKK_NOTIFY_AFTER + 1)); settle
 check "no notification while you look at the dashboard" '[ ! -s "$STACKK_NOTIFY_FILE" ]'
 send l3 busy; settle
 away; turn_ends l3 "l3 finished"; sleep $((STACKK_NOTIFY_AFTER + 1)); settle; back
-check "a notification names the session" 'grep -q "l3 is waiting for you" "$STACKK_NOTIFY_FILE"'
+check "a notification names the session" 'grep -q "“l3” is waiting for you" "$STACKK_NOTIFY_FILE"'
 check "exactly one notification for it" '[ "$(grep -c "l3" "$STACKK_NOTIFY_FILE")" = 1 ]'
+CLICK=$(sed -n 's/.*| click: //p' "$STACKK_NOTIFY_FILE" | head -1)
+check "clicking it runs stackk focus for that session" 'echo "$CLICK" | grep -q "focus'"'"' '"'"'$(idof l3)"'
+t select-window -t scratch:0; sleep 0.5
+env -i HOME="$HOME" sh -c "$CLICK" 2>/dev/null; sleep 2   # what macOS runs on click
+check "the click works from launchd's bare env: dashboard in front, session in the drawer" '[ "$(t display -p -t "$(tuipane)" "#{window_active}")" = 1 ] && [ "$(drawer)" = l3 ]'
+hclick 10 "$(( $(t display -p -t host "#{pane_height}") - 4 ))"; sleep 1.5
 : > "$STACKK_NOTIFY_FILE"
 send l3 busy; settle
 turn_ends l3 "back again"; clicktask l3; sleep $((STACKK_NOTIFY_AFTER + 1)); settle
@@ -172,13 +184,14 @@ check "no notification when it went back to work within the delay" '[ ! -s "$STA
 turn_ends l3 "done"; settle
 
 step "hide a window that is not a task (like TODO)"
+[ -n "$(drawer)" ] && { hclickon "close ▶"; sleep 1.5; }
 mkdir -p "$S/work/notes"; t new-window -d -t work: -n notes -c "$S/work/notes" "bash --norc"; settle
 check "the notes window is adopted onto the stack" '[ "$(viewof notes)" = stack ]'
 clicktask "notes" 2; sleep 1.2; hclickon "Hide (not a task)"; sleep 1.5
-check "hidden: out of every list, window name unchanged" '[ "$(viewof notes)" = hidden ] && [ "$(winname notes)" = notes ] && hv | grep -q "hidden 1"'
+check "hidden: out of every list, window name unchanged" '[ "$(viewof notes)" = hidden ] && [ "$(winname notes)" = notes ] && hv | grep -qE "hidden 1|⏸ 1"'
 settle; settle
 check "stays hidden and is not adopted again" '[ "$(viewof notes)" = hidden ] && [ "$(sk ls | grep -c " notes-")" = 1 ]'
-hclickon "hidden 1"; sleep 1.2; hclickon "hidden (not tasks)" ; hclickon "notes "; sleep 2
+hclickon "⏸"; sleep 1.2; hclickon "hidden (not tasks)" ; hclickon "notes "; sleep 2
 check "shown again from the modal" '[ "$(viewof notes)" = stack ]'
 
 step "Close & remove ends a session for good"

@@ -75,10 +75,28 @@ func turn(line string, in *bufio.Scanner) {
 		hook(map[string]any{"hook_event_name": "SessionEnd", "reason": "prompt_input_exit"})
 		os.Exit(0)
 	}
-	hook(map[string]any{"hook_event_name": "UserPromptSubmit", "prompt": line})
+	if rest, ok := strings.CutPrefix(line, "busy: "); ok { // long work with a real-looking prompt
+		hook(map[string]any{"hook_event_name": "UserPromptSubmit", "prompt": rest})
+		line = "busy"
+	} else {
+		hook(map[string]any{"hook_event_name": "UserPromptSubmit", "prompt": line})
+	}
 	switch line {
 	case "hang":
 		fmt.Println("(hung)")
+		return
+	case "demo": // a believable transcript, for screenshots
+		fmt.Print("\x1b[2J\x1b[H\x1b[2m> upgrade postgres to 16 and the pgx driver, keep the migrations green\x1b[0m\n" +
+			"\n\x1b[1m⏺\x1b[0m Upgraded the driver to pgx v5 and ran the migration suite.\n" +
+			"  \x1b[2m⎿  Bash(go test ./internal/db/...)\x1b[0m\n" +
+			"     \x1b[32mok\x1b[0m  internal/db         4.1s\n" +
+			"     \x1b[32mok\x1b[0m  internal/db/migrate 11.8s   214 passed\n\n" +
+			"\x1b[1m⏺\x1b[0m Postgres 16 is green locally. Two things before merging:\n\n" +
+			"  1. The connection pool default dropped from 25 to 4 in pgx v5;\n" +
+			"     I set it back explicitly in \x1b[36mconfig/db.go\x1b[0m.\n" +
+			"  2. \x1b[36mmigrations/0042_jsonb_index.sql\x1b[0m locks the table for ~40 s on\n" +
+			"     prod-sized data. Want me to rewrite it as CREATE INDEX CONCURRENTLY?\n\n")
+		hook(map[string]any{"hook_event_name": "Stop", "last_assistant_message": "Postgres 16 is green locally. Rewrite 0042 as CREATE INDEX CONCURRENTLY?"})
 		return
 	case "bgagent":
 		hook(map[string]any{"hook_event_name": "Stop", "last_assistant_message": "launched a subagent",

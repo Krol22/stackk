@@ -38,10 +38,12 @@ func TestWindowNameNeverDoublesSuffix(t *testing.T) {
 	}
 }
 
-func TestShellCommandQuoting(t *testing.T) {
-	got := shellCommand([]string{"/bin/claude", "it's a \"test\" $HOME"})
-	want := `exec '/bin/claude' 'it'"'"'s a "test" $HOME'`
-	if got != want {
-		t.Errorf("got %s", got)
+func TestShellArgsNeverQuoteThePrompt(t *testing.T) {
+	env, cmd := shellArgs([]string{"/bin/claude", `it's a "test" \ $HOME`})
+	if cmd != `exec "$STACKK_A0" "$STACKK_A1"` {
+		t.Errorf("command %s", cmd)
+	}
+	if env[3] != `STACKK_A1=it's a "test" \ $HOME` {
+		t.Errorf("env %q", env)
 	}
 }

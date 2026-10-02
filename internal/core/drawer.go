@@ -55,13 +55,19 @@ func (d *Drawer) read() (layout, error) {
 	return l, nil
 }
 
-// Out returns the task shown in the drawer, or "".
+// Out returns the task shown in the drawer, or "". It runs every second, so it only looks at
+// the dashboard's own window.
 func (d *Drawer) Out() string {
-	l, err := d.read()
-	if err != nil || l.side == nil || l.side.Role == "slot" {
+	panes, err := d.A.T.WindowPanes(d.UI)
+	if err != nil {
 		return ""
 	}
-	return l.side.Task
+	for _, p := range panes {
+		if p.ID != d.UI && p.Task != "" && p.Role != "slot" {
+			return p.Task
+		}
+	}
+	return ""
 }
 
 func (d *Drawer) newSlot() error {
@@ -78,20 +84,29 @@ func (d *Drawer) Ensure() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	t := d.A.T
-	if err := t.SetPaneOpt(d.UI, "@stackk_role", "tui"); err != nil {
-		return err
-	}
-	t.Run("set-option", "-w", "-t", d.UI, "@stackk_ui", "1")
-	t.SetPaneOpt(d.UI, "@stackk_stack", d.Stack)
-	// The dashboard's window is not a task's: drop a task name stackk once gave it by mistake.
-	if name, _ := t.Run("show-options", "-wqv", "-t", d.UI, "@stackk_wname"); name != "" {
-		t.Run("set-option", "-wu", "-t", d.UI, "@stackk_wname")
-		t.Run("rename-window", "-t", d.UI, "dashboard")
-	}
-	d.recoverStale()
 	l, err := d.read()
 	if err != nil {
 		return err
+	}
+	// Tag the dashboard (only what is missing: this runs every few seconds).
+	if l.ui.Role != "tui" {
+		t.SetPaneOpt(d.UI, "@stackk_role", "tui")
+	}
+	if !l.ui.UIWindow {
+		t.Run("set-option", "-w", "-t", d.UI, "@stackk_ui", "1")
+	}
+	if l.ui.OfStack != d.Stack {
+		t.SetPaneOpt(d.UI, "@stackk_stack", d.Stack)
+	}
+	// The dashboard's window is not a task's: drop a task name stackk once gave it by mistake.
+	if l.ui.SetName != "" {
+		t.Run("set-option", "-wu", "-t", d.UI, "@stackk_wname")
+		t.Run("rename-window", "-t", d.UI, "dashboard")
+	}
+	if d.recoverStale(l) {
+		if l, err = d.read(); err != nil {
+			return err
+		}
 	}
 	if l.side == nil {
 		// First start, or the pulled-out agent died: bring a stray slot back or make a new one.
@@ -260,12 +275,9 @@ func (d *Drawer) Quit() error {
 }
 
 // recoverStale handles windows left behind by a crashed TUI of this stack: a pulled-out agent
-// goes back to the stack session; the leftover placeholder is cleaned up by Ensure.
-func (d *Drawer) recoverStale() {
-	l, err := d.read()
-	if err != nil {
-		return
-	}
+// goes back to the stack session; the leftover placeholder is cleaned up by Ensure. It reports
+// whether it changed anything.
+func (d *Drawer) recoverStale(l layout) (changed bool) {
 	liveTUI := map[string]bool{}
 	for _, p := range l.panes {
 		if p.Role == "tui" && !p.Dead {
@@ -280,12 +292,14 @@ func (d *Drawer) recoverStale() {
 			if task, err := store.GetTask(d.A.DB, p.Task); err == nil && task.Stack == d.Stack {
 				d.sendHome(p, l)
 				if l, err = d.read(); err != nil {
-					return
+					return true
 				}
 			}
 		}
 		d.A.T.Run("set-option", "-wu", "-t", p.WindowID, "@stackk_ui")
+		changed = true
 	}
+	return changed
 }
 
 // Recall brings the agent out of the drawer back into the window of the given placeholder pane,
@@ -316,4 +330,54 @@ func (a *App) Recall(slotPane string) error {
 		}
 	}
 	return nil
+}
+
+// Focus brings the user to the dashboard of the task's stack (or any dashboard) and, given a
+// task, opens it in the drawer. Used when a notification is clicked.
+func (a *App) Focus(taskID string) error {
+	var task store.Task
+	stack := ""
+	if taskID != "" {
+		t, err := store.GetTask(a.DB, taskID)
+		if err != nil {
+			return err
+		}
+		task, stack = t, t.Stack
+	}
+	panes, err := a.T.AllPanes()
+	if err != nil {
+		return err
+	}
+	var ui tmux.Pane
+	for _, p := range panes {
+		if p.Role != "tui" || p.Dead {
+			continue
+		}
+		s, _ := a.T.Run("show-options", "-pqv", "-t", p.ID, "@stackk_stack")
+		if stack == "" || s == stack {
+			ui = p
+			break
+		}
+	}
+	if ui.ID == "" {
+		return fmt.Errorf("no stackk dashboard is running")
+	}
+	// The most recently active client is the one in front of you.
+	rows, _ := a.T.Fields("list-clients", "-F", tmux.F("client_name", "client_activity"))
+	client, best := "", ""
+	for _, r := range rows {
+		if len(r) == 2 && r[1] > best {
+			client, best = r[0], r[1]
+		}
+	}
+	if client != "" {
+		a.T.Run("switch-client", "-c", client, "-t", ui.SessionID)
+	}
+	a.T.Run("select-window", "-t", ui.WindowID)
+	a.T.Run("select-pane", "-t", ui.ID)
+	if task.TmuxPane == "" {
+		return nil
+	}
+	d := &Drawer{A: a, UI: ui.ID, Stack: task.Stack}
+	return d.Open(task.TmuxPane, true)
 }

@@ -14,6 +14,7 @@ import (
 	zone "github.com/lrstanley/bubblezone"
 
 	"github.com/krol22/stackk/internal/core"
+	"github.com/krol22/stackk/internal/sessions"
 	"github.com/krol22/stackk/internal/store"
 	"github.com/krol22/stackk/internal/tmux"
 )
@@ -56,21 +57,27 @@ type stackModel struct {
 	form          *formState
 	take          []tmux.Pane // "add windows" list while open
 	paused        bool        // paused-sessions modal open
+	find          *findState  // "find session" modal
 	hover         string
 	blurred       bool // keyboard focus is in the drawer (tmux focus events)
 	status        string
 	statusErr     bool
 	backendDown   bool
 	loading       bool
+	fullRunning   bool // a reconcile cycle is in flight
+	loadSeq       int  // last load started
+	appliedSeq    int  // newest load (or user action) the view reflects
 	lastFull      time.Time
 }
 
 type dataMsg struct {
+	seq         int
 	tasks       []store.Task
 	events      []store.EventRow
 	out, name   string
 	backendDown bool
 	full        bool
+	err         error
 }
 
 type doneMsg struct {
@@ -110,10 +117,15 @@ func RunStack(app *core.App, stack, uiPane string) error {
 
 func (m *stackModel) Init() tea.Cmd { return tea.Batch(m.load(true), tick()) }
 
+// load reads the state in the background. Loads are numbered so a slow one can never overwrite
+// newer data, and full ones (reconcile, notifications) never overlap: the tick only starts one
+// when the previous has come back.
 func (m *stackModel) load(full bool) tea.Cmd {
 	app, drawer, rec, notes, stack := m.app, m.drawer, m.rec, m.notes, m.stackID
+	m.loadSeq++
+	seq := m.loadSeq
 	return func() tea.Msg {
-		d := dataMsg{full: full}
+		d := dataMsg{seq: seq, full: full}
 		if full {
 			if err := rec.Run(app); err == core.ErrBackend {
 				d.backendDown = true
@@ -124,12 +136,21 @@ func (m *stackModel) load(full bool) tea.Cmd {
 		if full {
 			notes.Check(app, stack, drawer.UI, d.out)
 		}
-		d.tasks, _ = store.Tasks(app.DB, stack)
-		d.events, _ = store.Events(app.DB, stack, "", 30)
-		if ss, err := app.T.Sessions(); err == nil {
-			for _, s := range ss {
-				if s.ID == stack {
-					d.name = s.Name
+		var err error
+		if d.tasks, err = store.Tasks(app.DB, stack); err != nil {
+			d.err = err
+			return d
+		}
+		if d.events, err = store.Events(app.DB, stack, "", 30); err != nil {
+			d.err = err
+			return d
+		}
+		if full { // the stack can be renamed; no need to ask every second
+			if ss, err := app.T.Sessions(); err == nil {
+				for _, s := range ss {
+					if s.ID == stack {
+						d.name = s.Name
+					}
 				}
 			}
 		}
@@ -158,21 +179,30 @@ func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{tick()}
 		if !m.loading {
 			m.loading = true
-			full := time.Since(m.lastFull) >= 5*time.Second
+			full := !m.fullRunning && time.Since(m.lastFull) >= 5*time.Second
 			if full {
-				m.lastFull = time.Now()
+				m.lastFull, m.fullRunning = time.Now(), true
 			}
 			cmds = append(cmds, m.load(full))
 		}
 		return m, tea.Batch(cmds...)
 	case dataMsg:
 		m.loading = false
+		if msg.full {
+			m.fullRunning = false
+			m.backendDown = msg.backendDown
+		}
+		if msg.err != nil {
+			m.setStatus("can't read state: "+msg.err.Error(), true) // keep showing the last good data
+			return m, nil
+		}
+		if msg.seq < m.appliedSeq {
+			return m, nil // started before newer data or a user action: stale
+		}
+		m.appliedSeq = msg.seq
 		m.tasks, m.events, m.out = msg.tasks, msg.events, msg.out
 		if msg.name != "" {
 			m.stackName = msg.name
-		}
-		if msg.full {
-			m.backendDown = msg.backendDown
 		}
 	case doneMsg:
 		if msg.quit {
@@ -190,6 +220,20 @@ func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Not a close signal: tmux also sends focus-in when the drawer opens (unzoom). Closing on
 		// "click on the dashboard" is handled by the first click after a blur.
 		m.blurred = false
+	case findIndexMsg:
+		if m.find != nil {
+			m.find.all, m.find.loading = msg.all, false
+			m.find.local()
+		}
+	case findAIMsg:
+		if m.find != nil && msg.query == strings.TrimSpace(m.find.input.Value()) {
+			m.find.asking = false
+			if msg.err != nil {
+				m.find.err = msg.err.Error()
+			} else {
+				m.find.hits, m.find.aiQuery = msg.hits, msg.query
+			}
+		}
 	case tea.KeyMsg:
 		return m.key(msg)
 	case tea.MouseMsg:
@@ -208,6 +252,20 @@ func (m *stackModel) quit() tea.Cmd {
 
 func (m *stackModel) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case m.find != nil:
+		switch k.String() {
+		case "esc":
+			m.find = nil
+		case "enter":
+			return m, m.findAI()
+		default:
+			var cmd tea.Cmd
+			m.find.input, cmd = m.find.input.Update(k)
+			m.find.err, m.find.aiQuery = "", ""
+			m.find.local()
+			return m, cmd
+		}
+		return m, nil
 	case m.edit != nil:
 		switch k.String() {
 		case "esc":
@@ -268,6 +326,13 @@ func (m *stackModel) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		for _, c := range m.take {
 			if in("k:"+c.ID, msg) {
 				m.hover = "k:" + c.ID
+			}
+		}
+		if m.find != nil {
+			for i := range m.find.hits {
+				if in(fmt.Sprintf("fs:%d", i), msg) || in(fmt.Sprintf("fs2:%d", i), msg) {
+					m.hover = fmt.Sprintf("fs:%d", i)
+				}
 			}
 		}
 		if m.paused {
@@ -335,12 +400,17 @@ func (m *stackModel) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.paused {
 		return m, m.pausedClick(msg)
 	}
+	if m.find != nil {
+		return m, m.findClick(msg)
+	}
 	switch {
 	case in("b:next", msg):
 		return m, m.next()
 	case in("b:new", msg):
 		m.openForm()
 		return m, nil
+	case in("b:find", msg):
+		return m, m.openFind()
 	case in("b:paused", msg):
 		m.paused = true
 		return m, nil
@@ -386,13 +456,13 @@ func (m *stackModel) openPane(t store.Task) tea.Cmd {
 		return m.run(func() (string, error) { return "", fmt.Errorf("%s has no terminal yet", t.Name) })
 	}
 	d, pane := m.drawer, t.TmuxPane
-	m.out = t.ID
+	m.out, m.appliedSeq = t.ID, m.loadSeq+1 // loads already running predate this
 	return m.run(func() (string, error) { return "", d.Open(pane, true) })
 }
 
 func (m *stackModel) closeDrawer() tea.Cmd {
 	d := m.drawer
-	m.out = ""
+	m.out, m.appliedSeq = "", m.loadSeq+1
 	return m.run(func() (string, error) { return "", d.Close() })
 }
 
@@ -448,8 +518,10 @@ func (m *stackModel) openMenu(t store.Task, x, y int) {
 	add("-", "")
 	add("rename", "Rename…")
 	add("note", "Note…")
-	if live {
+	if live && t.Agent != "" && t.Phase != store.PhaseShell {
 		add("stop", "Stop")
+	}
+	if live {
 		add("kill", "Close & remove")
 	} else {
 		add("kill", "Remove")
@@ -510,8 +582,6 @@ func (m *stackModel) act(id, action string) tea.Cmd {
 			cmds = append(cmds, m.closeDrawer())
 		}
 		return tea.Sequence(append(cmds, m.run(func() (string, error) { return "removed " + t.Name, app.Remove(id) }))...)
-	case "archive":
-		return m.run(func() (string, error) { return "archived " + t.Name, app.Archive(id) })
 	case "rename", "note":
 		in := textinput.New()
 		in.Prompt = ""
@@ -764,6 +834,10 @@ func (m *stackModel) View() string {
 		fw := lipgloss.Width(strings.SplitN(form, "\n", 2)[0])
 		s = zone.Scan(overlay(s, form, max(0, (m.width-fw)/2), max(1, m.height/2-8)))
 	}
+	if m.find != nil {
+		w := min(m.width-4, 120)
+		s = zone.Scan(overlay(s, m.viewFind(w), max(0, (m.width-w)/2), 1))
+	}
 	if m.paused {
 		w := min(m.width-2, 90)
 		s = zone.Scan(overlay(s, m.viewPaused(w), max(0, (m.width-w)/2), 2))
@@ -886,7 +960,7 @@ func (m *stackModel) taskRows(t store.Task, view string, pos int, w int) []strin
 }
 
 func (m *stackModel) header(w int) string {
-	left := " " + sBright.Render("STACKK") + sDim.Render(" · ") + sText.Render(m.stackName) + "   " + m.counts()
+	left := " " + sBright.Render("STACKK") + sDim.Render(" · ") + sText.Render(fit(m.stackName, 32)) + "   " + m.counts()
 	right := ""
 	if p, h := len(m.sorted("paused")), len(m.sorted("hidden")); p+h > 0 {
 		label := fmt.Sprintf("⏸ paused %d", p)
@@ -895,7 +969,7 @@ func (m *stackModel) header(w int) string {
 		}
 		right = zone.Mark("b:paused", button(label, false)) + " "
 	}
-	right += zone.Mark("b:take", button("⇲ add windows", false)) + " " + zone.Mark("b:new", button("+ new", false)) + " " +
+	right += zone.Mark("b:find", button("⌕ find", false)) + " " + zone.Mark("b:take", button("⇲ add windows", false)) + " " + zone.Mark("b:new", button("+ new", false)) + " " +
 		zone.Mark("b:next", button("next ▶", true)) + " "
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
@@ -941,18 +1015,13 @@ func (m *stackModel) viewFull() string {
 	}
 	runLines, defLines := rows("running"), rows("deferred")
 	// RUNNING takes what SCHEDULED leaves, one blank line between boxes.
-	termH := 0
 	defH := 4
 	if len(defLines) > 0 {
-		defH = max(4, min(len(defLines)+3, (bodyH-termH)/2))
+		defH = max(4, min(len(defLines)+3, bodyH/2))
 	}
 	runH := bodyH - defH - 1
-	if termH > 0 {
-		runH -= termH + 1
-	}
 	right := box("RUNNING", sGrey.Bold(true), "do not disturb", runLines, rw, runH) + "\n\n" +
 		box("SCHEDULED", sPurple.Bold(true), "", defLines, rw, defH)
-
 
 	margin := strings.Repeat(" ", pad)
 	indent := func(block string) string {
@@ -993,8 +1062,12 @@ func (m *stackModel) logLines(w, n int) []string {
 		if !e.Applied {
 			detail += " (old run, ignored)"
 		}
+		source := e.Source
+		if source == "ty" { // stored as "ty" (you) since the first version
+			source = "you"
+		}
 		line := " " + sDim.Render(time.Unix(e.TS, 0).Format("15:04:05")) + "  " + eventIcon(e.Event) + "  " +
-			sText.Render(fit(e.TaskName, 24)) + " " + sGrey.Render(fit(e.Source, 10)) + " " +
+			sText.Render(fit(e.TaskName, 24)) + " " + sGrey.Render(fit(source, 10)) + " " +
 			sGrey.Render(fit(e.Event, 11)) + " " + sDim.Render(detail)
 		out = append(out, padRight(line, w))
 	}
@@ -1014,7 +1087,7 @@ func (m *stackModel) viewSidebar() string {
 	if n := len(m.sorted("paused")) + len(m.sorted("hidden")); n > 0 {
 		lines = append(lines, "", " "+zone.Mark("b:paused", button(fmt.Sprintf("⏸ %d", n), false)))
 	}
-	lines = append(lines, "", " "+zone.Mark("b:take", button("⇲", false))+" "+zone.Mark("b:new", button("+", false))+" "+
+	lines = append(lines, "", " "+zone.Mark("b:find", button("⌕", false))+" "+zone.Mark("b:take", button("⇲", false))+" "+zone.Mark("b:new", button("+", false))+" "+
 		zone.Mark("b:next", button("next ▶", true)), "")
 	section := func(title string, st lipgloss.Style, view string) {
 		if view != "stack" {
@@ -1047,6 +1120,15 @@ func (m *stackModel) viewSidebar() string {
 		lines[i] = padRight(lines[i], w)
 	}
 	return strings.Join(append(lines, m.statusLine(w)), "\n")
+}
+
+// lastDirs shows the end of a path ("acme/api"): where it was is what you recognize.
+func lastDirs(p string) string {
+	parts := strings.Split(strings.TrimRight(p, "/"), "/")
+	if len(parts) <= 2 {
+		return shortPath(p)
+	}
+	return "…/" + strings.Join(parts[len(parts)-2:], "/")
 }
 
 func shortPath(p string) string {
@@ -1123,4 +1205,167 @@ func (m *stackModel) viewForm() string {
 		" " + strings.Repeat(" ", max(0, w-30)) + zone.Mark("f:cancel", button("cancel", false)) + "  " + zone.Mark("f:ok", button("create ▶", true)),
 	}
 	return box("new session", sBright, "", lines, w, len(lines)+2)
+}
+
+// --- "find session": search past Claude/omp sessions and put one back on the stack ---
+
+type findState struct {
+	input   textinput.Model
+	all     []sessions.Session
+	hits    []sessions.Hit
+	loading bool // reading the session index
+	asking  bool // the model is ranking
+	askedAt time.Time
+	aiQuery string
+	err     string
+}
+
+type findIndexMsg struct{ all []sessions.Session }
+
+type findAIMsg struct {
+	query string
+	hits  []sessions.Hit
+	err   error
+}
+
+func (f *findState) local() {
+	if f.asking {
+		return
+	}
+	f.hits = sessions.Local(f.all, f.input.Value(), 12)
+}
+
+func (m *stackModel) openFind() tea.Cmd {
+	in := textinput.New()
+	in.Prompt = ""
+	in.Placeholder = "what was it about? (title, words from your prompts, folder)"
+	in.CharLimit = 200
+	in.Width = 70
+	in.Focus()
+	m.find = &findState{input: in, loading: true}
+	app := m.app
+	return func() tea.Msg { return findIndexMsg{all: app.SessionIndex()} }
+}
+
+func (m *stackModel) findAI() tea.Cmd {
+	f := m.find
+	q := strings.TrimSpace(f.input.Value())
+	if q == "" || f.loading || f.asking {
+		return nil
+	}
+	f.asking, f.err, f.askedAt = true, "", time.Now()
+	all := f.all
+	return func() tea.Msg {
+		hits, err := sessions.AI(all, q, 12)
+		return findAIMsg{query: q, hits: hits, err: err}
+	}
+}
+
+func (m *stackModel) findClick(msg tea.MouseMsg) tea.Cmd {
+	f := m.find
+	switch {
+	case in("fs:close", msg):
+		m.find = nil
+		return nil
+	case in("fs:ai", msg):
+		return m.findAI()
+	}
+	for i, h := range f.hits {
+		if !in(fmt.Sprintf("fs:%d", i), msg) && !in(fmt.Sprintf("fs2:%d", i), msg) {
+			continue
+		}
+		m.find = nil
+		app, d, stack, s := m.app, m.drawer, m.stackID, h.Session
+		return m.run(func() (string, error) {
+			t, err := app.Attach(stack, s)
+			if err != nil {
+				return "", err
+			}
+			if t.TmuxPane == "" {
+				return "attached " + t.Name, nil
+			}
+			return "attached " + t.Name, d.Open(t.TmuxPane, true)
+		})
+	}
+	return nil
+}
+
+// sessionState tells whether a found session is already one of the stack's tasks.
+func (m *stackModel) sessionState(s sessions.Session) string {
+	for _, t := range m.tasks {
+		if t.Agent == s.Agent && t.AgentSessionID == s.ID {
+			switch ViewOf(t) {
+			case "stack":
+				return "on the stack"
+			case "running":
+				return "running"
+			case "deferred":
+				return "scheduled"
+			case "paused":
+				return "paused"
+			case "hidden":
+				return "hidden"
+			}
+			return "finished"
+		}
+	}
+	return ""
+}
+
+func (m *stackModel) viewFind(w int) string {
+	f := m.find
+	inner := w - 2
+	status := ""
+	switch {
+	case f.loading:
+		status = "reading your sessions…"
+	case f.asking:
+		status = fmt.Sprintf("✨ asking claude to pick the best matches… %ds (keyword matches below meanwhile)", int(time.Since(f.askedAt).Seconds()))
+	case f.err != "":
+		status = f.err
+	case f.aiQuery != "":
+		status = fmt.Sprintf("✨ ranked by AI for %q · %d sessions searched", f.aiQuery, len(f.all))
+	case !sessions.HasTerms(f.input.Value()):
+		status = fmt.Sprintf("%d recent sessions · type to filter, enter asks AI", len(f.all))
+	default:
+		status = fmt.Sprintf("%d keyword matches in %d sessions · enter asks AI", len(f.hits), len(f.all))
+	}
+	statusSt := sGrey
+	if f.err != "" {
+		statusSt = sRed
+	}
+	lines := []string{"",
+		" " + sYellow.Render("⌕ ") + sLine.Render("[ ") + padRight(f.input.View(), inner-26) + sLine.Render(" ]") + " " + zone.Mark("fs:ai", button("✨ ask AI", true)),
+		" " + statusSt.Render(fit(status, inner-2)), ""}
+	if !f.loading && len(f.hits) == 0 {
+		lines = append(lines, " "+sDim.Render("no matching sessions — try other words, or enter to ask AI"))
+	}
+	maxRows := max(1, (m.height-12)/2)
+	for i, h := range f.hits {
+		if i == maxRows {
+			break
+		}
+		bg := func(s lipgloss.Style) lipgloss.Style { return s }
+		if m.hover == fmt.Sprintf("fs:%d", i) {
+			bg = func(s lipgloss.Style) lipgloss.Style { return s.Background(cHover) }
+		}
+		mark := "  "
+		if h.AI {
+			mark = "✨"
+		}
+		state := m.sessionState(h.Session)
+		right := fit(h.Agent, 7) + fit(ago(h.Modified.Unix()), 5)
+		stateW := 14
+		titleW := max(10, inner-4-lipgloss.Width(right)-stateW-2)
+		line1 := bg(sYellow).Render(" "+mark+" ") + bg(sBright).Render(fit(h.Title, titleW)) + bg(sText).Render(" ") +
+			bg(sPurple).Render(fit(state, stateW)) + bg(agentStyle(h.Agent)).Render(right)
+		snippet := ""
+		if len(h.Prompts) > 0 {
+			snippet = " · › " + h.Prompts[len(h.Prompts)-1]
+		}
+		line2 := bg(sDim).Render(fit("     "+lastDirs(h.Cwd)+snippet, inner))
+		lines = append(lines, zone.Mark(fmt.Sprintf("fs:%d", i), padRight(line1, inner)), zone.Mark(fmt.Sprintf("fs2:%d", i), line2))
+	}
+	lines = append(lines, "", " "+sDim.Render("click a session to put it on the stack and open it")+"   "+zone.Mark("fs:close", button("close", false)))
+	return box("find session", sBright, "", lines, w, len(lines)+2)
 }

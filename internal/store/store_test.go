@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -130,5 +131,54 @@ func TestStopWithBackgroundSubagentsKeepsWorking(t *testing.T) {
 	Reduce(&tk, Event{Kind: "stop", RunID: "r1", Msg: "all done"}, 20)
 	if !InStack(&tk) {
 		t.Fatal("final stop did not reach the stack")
+	}
+}
+
+func TestMigratesAnOldDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	// A database from before paused_at / hidden_at and user_version.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE tasks (id TEXT PRIMARY KEY, name TEXT NOT NULL, cwd TEXT NOT NULL DEFAULT '', agent TEXT NOT NULL,
+  agent_session_id TEXT, session_path TEXT NOT NULL DEFAULT '', stack TEXT NOT NULL, deferred INTEGER NOT NULL DEFAULT 0,
+  phase TEXT NOT NULL, waiting_kind TEXT NOT NULL DEFAULT '', waiting_tool_use_id TEXT NOT NULL DEFAULT '', phase_since INTEGER NOT NULL,
+  queued_at INTEGER NOT NULL DEFAULT 0, last_msg TEXT NOT NULL DEFAULT '', last_tool TEXT NOT NULL DEFAULT '', last_tool_at INTEGER NOT NULL DEFAULT 0,
+  last_event_at INTEGER NOT NULL DEFAULT 0, run_id TEXT NOT NULL DEFAULT '', run_state TEXT NOT NULL, run_started_at INTEGER NOT NULL DEFAULT 0,
+  tmux_pane TEXT NOT NULL DEFAULT '', home_window TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+  archived_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Exec(`INSERT INTO tasks (id, name, agent, stack, phase, phase_since, run_state, created_at) VALUES ('old','old','claude','$1','idle',1,'live',1)`)
+	raw.Close()
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := GetTask(db, "old")
+	if err != nil || got.PausedAt != 0 || got.HiddenAt != 0 {
+		t.Fatalf("old row after migration: %+v %v", got, err)
+	}
+	db.Close()
+	if _, err := Open(path); err != nil { // second open: already current
+		t.Fatal(err)
+	}
+}
+
+func TestTxRollsBackOnPanic(t *testing.T) {
+	db, _ := Open(filepath.Join(t.TempDir(), "s.db"))
+	err := db.Tx(func(q Querier) error {
+		InsertTask(q, Task{ID: "x", Name: "x", Agent: "claude", Stack: "$1", Phase: PhaseIdle, RunState: RunLive, CreatedAt: 1})
+		panic("boom")
+	})
+	if err == nil {
+		t.Fatal("panic not reported")
+	}
+	if _, err := GetTask(db, "x"); err != ErrNotFound {
+		t.Fatal("insert not rolled back")
+	}
+	if err := db.Tx(func(q Querier) error { return nil }); err != nil {
+		t.Fatalf("next transaction blocked: %v", err)
 	}
 }

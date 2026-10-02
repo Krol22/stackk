@@ -39,6 +39,10 @@ func Run(self string, out func(string)) error {
 
 func claude(path, self string, out func(string)) error {
 	settings := map[string]any{}
+	mode := os.FileMode(0o600) // a new settings file is private
+	if st, err := os.Stat(path); err == nil {
+		mode = st.Mode().Perm() // keep whatever you chose
+	}
 	raw, err := os.ReadFile(path)
 	switch {
 	case err == nil:
@@ -53,6 +57,9 @@ func claude(path, self string, out func(string)) error {
 		hooks = map[string]any{}
 	}
 	cmd := self + " mark claude"
+	if strings.ContainsAny(self, " '\"") {
+		cmd = "'" + strings.ReplaceAll(self, "'", `'"'"'`) + "' mark claude"
+	}
 	added := 0
 	for _, e := range claudeEvents {
 		entries, _ := hooks[e.event].([]any)
@@ -82,7 +89,7 @@ func claude(path, self string, out func(string)) error {
 	if err != nil {
 		return err
 	}
-	if err := writeAtomic(path, append(data, '\n')); err != nil {
+	if err := writeAtomic(path, append(data, '\n'), mode); err != nil {
 		return err
 	}
 	out(fmt.Sprintf("claude: added %d hooks to %s", added, path))
@@ -96,7 +103,7 @@ func hasStackk(entries []any) bool {
 		hs, _ := m["hooks"].([]any)
 		for _, h := range hs {
 			hm, _ := h.(map[string]any)
-			if c, _ := hm["command"].(string); strings.Contains(c, "stackk mark claude") {
+			if c, _ := hm["command"].(string); strings.Contains(c, "stackk") && strings.Contains(c, " mark claude") {
 				return true
 			}
 		}
@@ -118,16 +125,19 @@ func omp(path, self string, out func(string)) error {
 		return nil
 	}
 	os.Remove(path) // may be a symlink from a manual install
-	if err := writeAtomic(path, []byte(want)); err != nil {
+	if err := writeAtomic(path, []byte(want), 0o644); err != nil {
 		return err
 	}
 	out("omp: extension written to " + path)
 	return nil
 }
 
-func writeAtomic(path string, data []byte) error {
+func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil { // WriteFile's mode is cut by the umask
 		return err
 	}
 	return os.Rename(tmp, path)

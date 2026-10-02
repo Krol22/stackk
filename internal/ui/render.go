@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/krol22/stackk/internal/safe"
 	"github.com/krol22/stackk/internal/store"
 )
 
@@ -94,6 +95,7 @@ func fit(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
+	s = safe.Text(s)
 	if lipgloss.Width(s) > w {
 		return ansi.Truncate(s, w, "…")
 	}

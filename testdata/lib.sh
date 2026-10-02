@@ -24,6 +24,7 @@ check() { # check "name" <command that must succeed>
   pause 2
 }
 state() { sk ls | awk -v n="$1" '$2 ~ "^"n"-" {print $4, $5, $6}'; }
+viewof() { state "$1" | awk '{print $1}'; }
 paneof() { t list-panes -a -F '#{pane_id} #{@stackk_task}' | awk -v n="$1" '$2 ~ "^"n"-" {print $1}'; }
 idof() { sk ls | awk -v n="$1" '$2 ~ "^"n"-" {print $2}'; }
 tuipane() { t list-panes -a -F '#{pane_id} #{@stackk_role}' | awk '$2=="tui"{print $1}'; }
@@ -37,6 +38,11 @@ row() { hv | grep -n " $1 " | head -1 | cut -d: -f1; }
 # clicktask NAME [button]: click on the task's name, wherever its row is (left or right column)
 clicktask() { local y; y=$(row "$1"); hclick "$(( $(hcol "$y" " $1 ") + 2 ))" "$y" "${2:-0}"; }
 winname() { t display -p -t "$(sk ls -json | python3 -c 'import json,sys; print([t["HomeWindow"] for t in json.load(sys.stdin) if t["Name"]==sys.argv[1]][0])' "$1")" '#{window_name}'; }
+# typeslow TEXT: type into whatever has focus, letter by letter in demo mode (no Enter)
+typeslow() {
+  if [ -n "$DEMO" ]; then for ((i = 0; i < ${#1}; i++)); do t send-keys -t host -l "${1:i:1}"; sleep 0.07; done
+  else t send-keys -t host -l "$1"; fi
+}
 htype() { # type like a human into whatever has focus (the popup when it is open)
   if [ -n "$DEMO" ]; then for ((i = 0; i < ${#1}; i++)); do t send-keys -t host -l "${1:i:1}"; sleep 0.06; done
   else t send-keys -t host -l "$1"; fi
@@ -53,7 +59,7 @@ t set -g mouse on; t set -g base-index 1; t set -g escape-time 0; t set -g focus
 t set -t scratch status-left-length 170; t set -t scratch status-right ""; t set -t scratch status-style "bg=#222222,fg=#8a8a8a"
 t set -t scratch window-status-format ""; t set -t scratch window-status-current-format ""
 t new-window -t scratch: -n ui "sleep 0.5; exec $S/bin/stackk work"
-t new-session -d -s host -x 180 -y 50 "env -u TMUX -u TMUX_PANE tmux -L stackk-test attach -t scratch"
+t new-session -d -s host -x 180 -y 50 "env -u TMUX -u TMUX_PANE tmux -L $STACKK_TMUX_SOCKET attach -t scratch"
 t set -t host status off
 if [ -n "$DEMO" ]; then
   while [ "$(t list-clients -F '#{session_name}' | grep -c host)" = 0 ]; do sleep 0.2; done

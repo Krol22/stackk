@@ -1,18 +1,28 @@
 # stackk
 
-A round-robin stack for the AI coding sessions you juggle in tmux.
+**A round-robin stack for the AI coding sessions you juggle in tmux.**
 
-You run several Claude Code / [omp](https://github.com/can1357/oh-my-pi) sessions at once and hop between them. stackk keeps them in one dashboard, ordered by who has been waiting for you the longest:
+You run a handful of Claude Code / [omp](https://github.com/can1357/oh-my-pi) sessions at once and hop between them. stackk puts them in one mouse-driven dashboard. Whoever has waited for you the longest is on top. Click it, answer, click the next one. When an agent finishes its turn, the session comes back on the stack by itself.
+
+![The stackk dashboard: sessions waiting for you, agents at work, parked work](docs/dashboard.png)
 
 - **STACK**: sessions waiting for you (finished a turn, need a permission or an answer), oldest first
-- **RUNNING**: agents at work, so you don't have to look
-- **SCHEDULED**: work you parked on purpose
+- **RUNNING**: agents at work, including subagents in the background, so you don't have to look
+- **SCHEDULED**: work you parked on purpose; **paused** and **hidden** sessions stay out of sight until you want them
 
-Click a session and its real terminal slides in on the right. Answer it, then click the next one. When the agent finishes, the session goes back on the stack by itself, and you get a macOS notification if it's still waiting a couple of minutes later.
+Click a session and its real terminal slides in on the right. Scrolling, selection and paste work as usual. Click the dashboard to put it away.
+
+![A session open in the drawer next to the stack](docs/drawer.png)
+
+Closed a session weeks ago and need it back? **⌕ find** searches your past Claude and omp sessions by title, prompts and folder. Press Enter and a small model picks the matches, even when you remember it in other words. One click resumes the conversation onto the stack.
+
+![Finding a past session with AI ranking](docs/find.png)
+
+A macOS notification tells you when a session has been waiting a couple of minutes and you weren't looking. Clicking it brings the dashboard back with that session open.
 
 ## Requirements
 
-- macOS (notifications use `osascript`; the rest works anywhere tmux does)
+- macOS for notifications ([terminal-notifier](https://github.com/julienXX/terminal-notifier) makes them clickable; without it they fall back to `osascript`). The rest works anywhere tmux does
 - tmux 3.3+ with `set -g mouse on` (stackk is driven with the mouse)
 - Go 1.24+ to build (newer toolchains download themselves via `GOTOOLCHAIN`)
 - Claude Code and/or omp
@@ -33,10 +43,11 @@ stackk          # dashboard in the current pane; tasks live in a hidden tmux ses
 stackk main     # or: turn an existing session (all its windows) into the stack
 ```
 
-- **Left click** a session to open it in the drawer. Clicking the dashboard closes it, and clicking another session switches to it. Drag the border to resize.
+- **Left click** a session to open it in the drawer. Clicking the dashboard closes it, clicking another session switches to it, and dragging the border resizes it.
 - **Right click** (or `…`) for Schedule, Pause, Hide, Skip, Rename, Note, Stop, Close & remove.
 - **next ▶** opens the session at the head of the stack.
 - **+ new** starts a session in a folder, optionally with a first prompt.
+- **⌕ find** puts a past session back on the stack.
 - **⇲ add windows** moves agent windows from your other sessions into the stack.
 
 Window names carry the state, both ways: stackk appends ` st` (scheduled) and ` p` (paused), and renaming a window yourself does the same.
@@ -49,7 +60,7 @@ Window names carry the state, both ways: stackk appends ` st` (scheduled) and ` 
 | paused | `⏸` modal | hidden until you bring it back; the agent keeps running |
 | hidden | `⏸` modal | not a task at all (notes, an editor) |
 
-CLI: `stackk ls [-json]`, `stackk log [task]`, `stackk new <folder> [prompt]`, `stackk take`, `stackk pause|resume|hide|unhide|rm <task>`.
+CLI: `stackk ls [-json]`, `stackk log [task]`, `stackk new <folder> [prompt]`, `stackk take`, `stackk find [-ai] <query>`, `stackk attach <session>`, `stackk pause|resume|hide|unhide|rm <task>`, `stackk focus [task]`, `stackk test-notify`.
 
 ## How it works
 
@@ -59,12 +70,22 @@ CLI: `stackk ls [-json]`, `stackk log [task]`, `stackk new <folder> [prompt]`, `
 - **The drawer swaps panes:** it `swap-pane`s the agent's real pane next to the dashboard, so scrolling, selection and paste are plain tmux.
 - **Reconcile runs every few seconds.** It picks up moved and new windows, notices dead panes, and flags a silent "working" session as `⁇`.
 
+### Security
+
+- **Outside text never reaches the terminal as control sequences.** That means agent replies, session titles, transcripts and window names. An agent that read a hostile repo can't retitle the dashboard, write your clipboard (OSC 52) or fake what you see. Control characters and bidi overrides are stripped when text is stored and again when it's drawn.
+- **stackk's state directory (`~/.local/state/stackk`) is `0700`.** It holds excerpts of your prompts, so it gets the same protection as Claude's own transcripts.
+- **The AI search runs `claude -p` with no tools, no MCP servers, no saved session and none of your hooks**, in a private empty directory. It only ranks results; its reply is parsed as a list of numbers.
+- **Agents are started with their arguments in environment variables**, never spliced into a shell command. A prompt full of quotes, `$`, backticks or `\` reaches the agent unchanged in fish, bash and zsh.
+
 `DESIGN.md` has the full design, in Polish.
 
 ## Tests
 
 ```sh
 make test   # unit tests
-make e2e    # end-to-end on an isolated tmux server (-L stackk-test) with a fake agent
-make demo   # record the e2e run with vhs
+make e2e          # end-to-end on an isolated tmux server (-L stackk-test) with a fake agent:
+                  # UI, stack lifecycle under fish, find, security
+make perf         # performance budget: tmux calls per minute, hook latency
+make demo         # record the e2e run with vhs
+make screenshots  # regenerate docs/*.png (vhs, its own tmux server)
 ```

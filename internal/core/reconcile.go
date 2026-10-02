@@ -3,6 +3,8 @@ package core
 import (
 	"errors"
 	"fmt"
+
+	"github.com/krol22/stackk/internal/safe"
 	"hash/fnv"
 	"os"
 	"strconv"
@@ -44,7 +46,16 @@ func (r *Reconciler) Run(a *App) error {
 		return ErrBackend
 	}
 	now := a.Now()
-	procs := readProcs()
+	// The process table is only needed for agents that never sent a hook and for windows not yet
+	// adopted; read it at most once, and only then.
+	var procs *procTree
+	procsRead := false
+	getProcs := func() *procTree {
+		if !procsRead {
+			procs, procsRead = readProcs(), true
+		}
+		return procs
+	}
 	byID := map[string]tmux.Pane{}
 	for _, p := range panes {
 		byID[p.ID] = p
@@ -71,7 +82,9 @@ func (r *Reconciler) Run(a *App) error {
 			a.reconcileExit(t.ID, t.RunID, "pane is gone")
 		default:
 			a.reconcileLive(t, p, now)
-			a.reconcileAgent(t, p, procs.agentIn(p), now)
+			if t.LastEventAt == 0 {
+				a.reconcileAgent(t, p, getProcs().agentIn(p), now)
+			}
 			a.repairPhase(t, now)
 			if t.Phase == store.PhaseWorking && t.RunState == store.RunLive {
 				r.checkQuiet(a, t, now)
@@ -99,7 +112,7 @@ func (r *Reconciler) Run(a *App) error {
 				skip = true
 				break
 			}
-			if procs.agentIn(p) != "" && (pick == nil || procs.agentIn(*pick) == "") {
+			if getProcs().agentIn(p) != "" && (pick == nil || getProcs().agentIn(*pick) == "") {
 				pick = &byWindow[w][i]
 			} else if pick == nil && p.Active {
 				pick = &byWindow[w][i]
@@ -111,7 +124,7 @@ func (r *Reconciler) Run(a *App) error {
 		if pick == nil {
 			pick = &byWindow[w][0]
 		}
-		a.adoptPane(*pick, procs.agentIn(*pick), now)
+		a.adoptPane(*pick, getProcs().agentIn(*pick), now)
 	}
 	return nil
 }
@@ -158,7 +171,7 @@ func (a *App) reconcileLive(snap store.Task, p tmux.Pane, now int64) {
 			// task. It counts only in a window whose name stackk set before and that has changed
 			// since; a window stackk never named (new, or from an older version) is just renamed.
 			if !autoName(p.WindowName) && p.SetName != "" && p.WindowName != p.SetName && p.WindowName != WindowName(t) {
-				base, scheduled, paused := SplitName(p.WindowName)
+				base, scheduled, paused := SplitName(safe.Text(p.WindowName))
 				before := store.InStack(&t)
 				t.Name, t.Deferred = base, scheduled
 				switch {
@@ -202,7 +215,14 @@ func (a *App) reconcileLive(snap store.Task, p tmux.Pane, now int64) {
 	}
 }
 
+// checkQuiet flags a "working" session whose screen has not changed and that sent no event for
+// quietAfter. A session that reported recently cannot qualify, so its screen is not captured at
+// all until half the threshold has passed without events (detection lands at about 1.5×).
 func (r *Reconciler) checkQuiet(a *App, t store.Task, now int64) {
+	if now-t.LastEventAt < quietAfter/2 {
+		delete(r.quiet, t.TmuxPane)
+		return
+	}
 	screen, err := a.T.Run("capture-pane", "-p", "-t", t.TmuxPane)
 	if err != nil {
 		return
@@ -224,8 +244,8 @@ func (r *Reconciler) checkQuiet(a *App, t store.Task, now int64) {
 	}
 	a.DB.Tx(func(qq store.Querier) error {
 		cur, err := store.GetTask(qq, t.ID)
-		if err != nil || cur.Phase != store.PhaseWorking {
-			return err
+		if err != nil || cur.Phase != store.PhaseWorking || now-cur.LastEventAt < quietAfter {
+			return err // a hook arrived meanwhile
 		}
 		store.Reduce(&cur, store.Event{Kind: "unknown", Source: "reconcile"}, now)
 		if err := store.UpdateTask(qq, cur); err != nil {
@@ -250,7 +270,12 @@ func (a *App) adoptPane(p tmux.Pane, agent string, now int64) {
 		}
 	}
 	applySuffix(&t, p.WindowName, now)
+	adopted := false
 	err := a.DB.Tx(func(q store.Querier) error {
+		if held, err := store.FindByPane(q, p.ID); err == nil && held.RunState != store.RunExited {
+			return nil // a hook adopted this pane since the snapshot
+		}
+		adopted = true
 		if _, err := store.GetTask(q, t.ID); err == nil {
 			if err := store.UpdateTask(q, t); err != nil {
 				return err
@@ -260,9 +285,8 @@ func (a *App) adoptPane(p tmux.Pane, agent string, now int64) {
 		}
 		return store.LogEvent(q, store.EventRow{TS: now, TaskID: t.ID, RunID: t.RunID, Source: "reconcile", Event: "adopt", Applied: true, Detail: p.SessionName + ":" + p.WindowIndex})
 	})
-	if err == nil {
-		a.T.SetPaneOpt(p.ID, "@stackk_task", t.ID)
-		a.T.SetPaneOpt(p.ID, "@stackk_run", t.RunID)
+	if err == nil && adopted {
+		a.tagPane(p.ID, t)
 		a.setWindowName(p.WindowID, WindowName(t))
 	}
 }
@@ -286,8 +310,8 @@ func (a *App) reconcileAgent(t store.Task, p tmux.Pane, agent string, now int64)
 	}
 	a.DB.Tx(func(q store.Querier) error {
 		cur, err := store.GetTask(q, t.ID)
-		if err != nil || cur.RunID != t.RunID {
-			return err
+		if err != nil || cur.RunID != t.RunID || cur.LastEventAt != 0 {
+			return err // hooks started reporting meanwhile: they are the truth now
 		}
 		if agent != "" {
 			cur.Agent = agent
