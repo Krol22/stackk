@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/krol22/stackk/internal/core"
+	"github.com/krol22/stackk/internal/sessions"
 	"github.com/krol22/stackk/internal/setup"
 	"github.com/krol22/stackk/internal/store"
 	"github.com/krol22/stackk/internal/tmux"
@@ -22,6 +23,9 @@ const usage = `stackk — a round-robin stack of AI sessions in tmux
   stackk setup                        hook stackk into Claude Code and omp (run once after installing)
   stackk [stack]                      dashboard in the current pane (default stack "stackk", created on first use)
   stackk take [stack]                 move the current window into the stack
+  stackk focus [task]                 bring the dashboard to the front (and open a task in the drawer)
+  stackk find [-ai] [-json] <query>   search past Claude/omp sessions (title, prompts, folder)
+  stackk attach [-stack s] <session>  resume a past session (id or id prefix) onto the stack
   stackk new [-agent claude|omp] [-name n] [-stack s] <folder> [prompt]
   stackk ls [-json]                   tasks
   stackk log [task]                   events
@@ -64,6 +68,19 @@ func main() {
 		err = ui.RunStack(app, core.DefaultStack(), os.Getenv("TMUX_PANE"))
 	case "setup":
 		err = setup.Run(app.Self, func(s string) { fmt.Println(s) })
+	case "focus":
+		task := ""
+		if len(args) > 0 {
+			task = args[0]
+		}
+		err = app.Focus(task)
+	case "test-notify":
+		app.TestNotify()
+		fmt.Println("sent: click the notification; it should bring your terminal and the stackk dashboard to the front")
+	case "find":
+		err = findCmd(app, args)
+	case "attach":
+		err = attachCmd(app, args)
 	case "take":
 		err = take(app, args)
 	case "new":
@@ -139,14 +156,15 @@ func mark(args []string) {
 	if pane == "" {
 		os.Exit(0)
 	}
-	// Most hook calls come from panes outside any stack: answer those without touching the DB.
-	// Stack session flag or task tag (a task pulled into a drawer sits outside the stack).
-	if on, err := tmux.FromEnv().Run("display-message", "-p", "-t", pane, "#{@stackk}#{@stackk_task}"); err != nil || on == "" {
+	// One tmux query decides and feeds Mark. Most hook calls come from panes outside any stack
+	// (not in a stack session, no task tag): those exit here without touching the DB.
+	p, err := tmux.FromEnv().Pane(pane)
+	if err != nil || (!p.Stack && p.Task == "") {
 		os.Exit(0)
 	}
 	app, err := open()
 	if err == nil {
-		err = app.Mark(agent, raw, os.Getenv("TMUX_PANE"), os.Getenv("STACKK_TASK_ID"), os.Getenv("STACKK_RUN_ID"))
+		err = app.Mark(agent, raw, p, os.Getenv("STACKK_TASK_ID"), os.Getenv("STACKK_RUN_ID"))
 	}
 	if err != nil {
 		logErr(err)
@@ -321,4 +339,59 @@ func slot(pane string) {
 			logErr(err)
 		}
 	})
+}
+
+func findCmd(app *core.App, args []string) error {
+	fs := flag.NewFlagSet("find", flag.ExitOnError)
+	ai := fs.Bool("ai", false, "rank with a small model (claude -p, haiku)")
+	asJSON := fs.Bool("json", false, "JSON output")
+	fs.Parse(args)
+	query := strings.Join(fs.Args(), " ")
+	all := app.SessionIndex()
+	var hits []sessions.Hit
+	var err error
+	if *ai {
+		hits, err = sessions.AI(all, query, 12)
+	} else {
+		hits = sessions.Local(all, query, 12)
+	}
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(hits)
+	}
+	for _, h := range hits {
+		fmt.Printf("%-6s %-38s %-12s %s  %s\n", h.Agent, h.ID, h.Modified.Format("01-02 15:04"), h.Title, h.Cwd)
+	}
+	return nil
+}
+
+func attachCmd(app *core.App, args []string) error {
+	fs := flag.NewFlagSet("attach", flag.ExitOnError)
+	stack := fs.String("stack", "", "stack")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		return fmt.Errorf("stackk attach <session id or prefix>")
+	}
+	var match []sessions.Session
+	for _, s := range app.SessionIndex() {
+		if strings.HasPrefix(s.ID, fs.Arg(0)) {
+			match = append(match, s)
+		}
+	}
+	if len(match) != 1 {
+		return fmt.Errorf("%d sessions match %q", len(match), fs.Arg(0))
+	}
+	st, err := currentStack(app, *stack)
+	if err != nil {
+		return err
+	}
+	t, err := app.Attach(st.ID, match[0])
+	if err == nil {
+		fmt.Println(t.ID)
+	}
+	return err
 }

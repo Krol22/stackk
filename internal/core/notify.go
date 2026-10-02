@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/krol22/stackk/internal/safe"
 	"github.com/krol22/stackk/internal/store"
 )
 
@@ -47,14 +48,14 @@ func (n *Notifier) Check(a *App, stack, uiPane, out string) {
 		}
 		n.prev[t.ID] = running
 	}
-	var due []string
+	var due []store.Task
 	for id, queued := range n.pending {
 		t, ok := byID[id]
 		switch {
 		case !ok || !store.InStack(&t) || t.QueuedAt != queued || id == out:
 			delete(n.pending, id) // left the stack, re-queued, or you opened it
 		case now-queued >= notifyAfter:
-			due = append(due, t.Name)
+			due = append(due, t)
 		}
 	}
 	if len(due) == 0 || now-n.lastSent < notifyInterval {
@@ -69,12 +70,19 @@ func (n *Notifier) Check(a *App, stack, uiPane, out string) {
 		return // the dashboard is in front of you
 	}
 	n.lastSent = now
-	title := "stackk"
-	msg := due[0] + " is waiting for you"
-	if len(due) > 1 {
-		msg = fmt.Sprintf("%d sessions are waiting: %s", len(due), strings.Join(due, ", "))
+	// Names are quoted: a message can never start with "-" and be read as an option.
+	msg := "“" + safe.Text(due[0].Name) + "” is waiting for you"
+	click := []string{a.Self, "focus"} // click: back to the dashboard…
+	if len(due) == 1 {
+		click = append(click, due[0].ID) // …with that session open
+	} else {
+		names := make([]string, len(due))
+		for i, t := range due {
+			names[i] = "“" + safe.Text(t.Name) + "”"
+		}
+		msg = fmt.Sprintf("%d sessions are waiting: %s", len(due), strings.Join(names, ", "))
 	}
-	notify(title, msg)
+	a.notify("stackk", msg, click)
 }
 
 // watching reports a focused tmux client showing the dashboard's window.
@@ -92,14 +100,68 @@ func (a *App) watching(uiPane string) bool {
 	return false
 }
 
-func notify(title, msg string) {
+// notify shows a macOS notification. With terminal-notifier, clicking it brings the terminal
+// app to the front and runs click (stackk focus …); osascript notifications can only open
+// Script Editor, so they are the fallback.
+func (a *App) notify(title, msg string, click []string) {
 	if f := os.Getenv("STACKK_NOTIFY_FILE"); f != "" { // tests
 		if fh, err := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-			fmt.Fprintf(fh, "%s: %s\n", title, msg)
+			fmt.Fprintf(fh, "%s: %s | click: %s\n", title, msg, shellJoin(a.tmuxEnv(click)))
 			fh.Close()
+		}
+		return
+	}
+	if tn, err := exec.LookPath("terminal-notifier"); err == nil {
+		args := []string{"-title", title, "-message", msg, "-group", "stackk", "-sound", "Glass"}
+		if bundle := a.terminalBundle(); bundle != "" {
+			args = append(args, "-activate", bundle)
+		}
+		if len(click) > 0 {
+			args = append(args, "-execute", shellJoin(a.tmuxEnv(click)))
+		}
+		cmd := exec.Command(tn, args...)
+		if cmd.Start() == nil {
+			go cmd.Wait() // reap it: the dashboard runs for days
 		}
 		return
 	}
 	q := func(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), `"`, `\"`) }
 	exec.Command("osascript", "-e", fmt.Sprintf(`display notification "%s" with title "%s" sound name "Glass"`, q(msg), q(title))).Run()
+}
+
+// terminalBundle is the macOS app the tmux client runs in (e.g. com.github.wez.wezterm).
+func (a *App) terminalBundle() string {
+	if b := os.Getenv("STACKK_TERMINAL_BUNDLE"); b != "" {
+		return b
+	}
+	out, _ := a.T.Run("show-environment", "-g", "__CFBundleIdentifier")
+	if v, ok := strings.CutPrefix(out, "__CFBundleIdentifier="); ok {
+		return v
+	}
+	return ""
+}
+
+// tmuxEnv makes a click command reach this tmux server: terminal-notifier runs it outside tmux.
+// It starts from launchd's bare environment, so PATH (for tmux), the server and the DB go along.
+func (a *App) tmuxEnv(cmd []string) []string {
+	env := []string{"env", "PATH=" + os.Getenv("PATH")}
+	for _, k := range []string{"TMUX", "STACKK_TMUX_SOCKET", "STACKK_DB", "HOME"} {
+		if v := os.Getenv(k); v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	return append(env, cmd...)
+}
+
+func shellJoin(args []string) string {
+	q := make([]string, len(args))
+	for i, s := range args {
+		q[i] = "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+	}
+	return strings.Join(q, " ")
+}
+
+// TestNotify sends a notification exactly like a real one, for checking the click from your desk.
+func (a *App) TestNotify() {
+	a.notify("stackk", "test: click me to go back to the dashboard", []string{a.Self, "focus"})
 }

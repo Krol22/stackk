@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/krol22/stackk/internal/hook"
+	"github.com/krol22/stackk/internal/safe"
 	"github.com/krol22/stackk/internal/store"
 	"github.com/krol22/stackk/internal/tmux"
 )
@@ -56,7 +57,8 @@ func NewRunID() string { return "r" + randHex(4) }
 
 // taskName picks a readable name for an adopted pane: the window name unless tmux auto-named it after the process.
 func taskName(p tmux.Pane, cwd string) string {
-	if base, _, _ := SplitName(p.WindowName); base != "" && tmux.AgentOf(base) == "" && base != "fish" && base != "bash" && base != "zsh" {
+	p.WindowName = safe.Text(p.WindowName)
+	if base, _, _ := SplitName(p.WindowName); !autoName(p.WindowName) {
 		return base
 	}
 	if cwd == "" {
@@ -65,16 +67,14 @@ func taskName(p tmux.Pane, cwd string) string {
 	return filepath.Base(cwd)
 }
 
-// Mark handles one hook invocation from inside an agent's pane.
-func (a *App) Mark(agent string, raw []byte, paneID, envTask, envRun string) error {
+// Mark handles one hook invocation from inside an agent's pane (already looked up by the caller,
+// which also used it to skip panes outside any stack without opening the DB).
+func (a *App) Mark(agent string, raw []byte, pane tmux.Pane, envTask, envRun string) error {
 	ev, p, ok := hook.Parse(agent, raw)
-	if !ok || paneID == "" {
+	if !ok || pane.ID == "" {
 		return nil
 	}
-	pane, err := a.T.Pane(paneID)
-	if err != nil {
-		return err
-	}
+	paneID := pane.ID
 	// A task pulled into the drawer sits outside its stack session; its pane tag still says whose it is.
 	if !pane.Stack && pane.Task == "" {
 		return nil
@@ -82,7 +82,7 @@ func (a *App) Mark(agent string, raw []byte, paneID, envTask, envRun string) err
 	now := a.Now()
 	tag := ""
 	var tagged store.Task
-	err = a.DB.Tx(func(q store.Querier) error {
+	err := a.DB.Tx(func(q store.Querier) error {
 		taskID := pane.Task
 		if taskID == "" {
 			taskID = envTask
@@ -161,10 +161,15 @@ func (a *App) Mark(agent string, raw []byte, paneID, envTask, envRun string) err
 		return err
 	}
 	if tag != "" {
-		a.T.SetPaneOpt(paneID, "@stackk_task", tagged.ID)
-		a.T.SetPaneOpt(paneID, "@stackk_run", tagged.RunID)
+		a.tagPane(paneID, tagged)
 	}
 	return nil
+}
+
+// tagPane records on the pane which task and run it holds; hooks and reconcile read it back.
+func (a *App) tagPane(pane string, t store.Task) {
+	a.T.SetPaneOpt(pane, "@stackk_task", t.ID)
+	a.T.SetPaneOpt(pane, "@stackk_run", t.RunID)
 }
 
 // --- stacks ---
@@ -281,21 +286,26 @@ func agentArgv(agent, prompt, resume string) ([]string, error) {
 	return argv, nil
 }
 
-// shellCommand runs argv through the user's shell (so its config sets PATH and env) but with
-// exec, so the agent replaces the shell: fish would otherwise stay as the pane's process.
-// The quoting works in fish, bash and zsh alike.
-func shellCommand(argv []string) string {
-	parts := make([]string, len(argv))
-	for i, a := range argv {
-		parts[i] = "'" + strings.ReplaceAll(a, "'", `'"'"'`) + "'"
+// shellArgs runs argv through the user's shell (its config sets PATH and env) with exec, so the
+// agent replaces the shell (fish would otherwise stay as the pane's process). The arguments go
+// in as environment variables and are expanded as "$STACKK_An": nothing in a prompt is ever
+// parsed by fish, bash or zsh, whose quoting rules differ (fish treats \ inside '…').
+func shellArgs(argv []string) (env []string, command string) {
+	refs := make([]string, len(argv))
+	for i, arg := range argv {
+		name := fmt.Sprintf("STACKK_A%d", i)
+		env = append(env, "-e", name+"="+arg)
+		refs[i] = `"$` + name + `"`
 	}
-	return "exec " + strings.Join(parts, " ")
+	return env, "exec " + strings.Join(refs, " ")
 }
 
 func (a *App) spawn(t store.Task, argv []string) (pane, window string, err error) {
 	args := []string{"new-window", "-d", "-t", t.Stack + ":", "-n", WindowName(t), "-c", t.Cwd,
 		"-e", "STACKK_TASK_ID=" + t.ID, "-e", "STACKK_RUN_ID=" + t.RunID, "-P", "-F", "#{pane_id}\t#{window_id}"}
-	out, err := a.T.Run(append(args, shellCommand(argv))...)
+	env, command := shellArgs(argv)
+	args = append(args, env...)
+	out, err := a.T.Run(append(args, command)...)
 	if err != nil {
 		return "", "", err
 	}
@@ -303,8 +313,7 @@ func (a *App) spawn(t store.Task, argv []string) (pane, window string, err error
 	if len(parts) != 2 {
 		return "", "", fmt.Errorf("new-window: %q", out)
 	}
-	a.T.SetPaneOpt(parts[0], "@stackk_task", t.ID)
-	a.T.SetPaneOpt(parts[0], "@stackk_run", t.RunID)
+	a.tagPane(parts[0], t)
 	a.setWindowName(parts[1], WindowName(t))
 	return parts[0], parts[1], nil
 }
@@ -496,22 +505,12 @@ func (a *App) SetPhase(id, phase string) error {
 	})
 }
 
-// Archive hides a finished task (kept for the log).
-func (a *App) Archive(id string) error {
-	return a.update(id, "archive", "", func(t *store.Task, now int64) error {
-		if t.RunState != store.RunExited {
-			return fmt.Errorf("stop %s first", t.Name)
-		}
-		t.ArchivedAt = now
-		return nil
-	})
-}
-
 func (a *App) Rename(id, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil
 	}
+	name = safe.Text(name)
 	err := a.update(id, "rename", name, func(t *store.Task, now int64) error {
 		t.Name, _, _ = SplitName(name)
 		return nil
@@ -521,6 +520,7 @@ func (a *App) Rename(id, name string) error {
 }
 
 func (a *App) SetNote(id, note string) error {
+	note = safe.Text(note)
 	return a.update(id, "note", note, func(t *store.Task, now int64) error {
 		t.Note = strings.TrimSpace(note)
 		return nil

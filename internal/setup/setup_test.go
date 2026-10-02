@@ -49,3 +49,14 @@ func TestOmpExtensionGetsBinaryPath(t *testing.T) {
 		t.Error("binary path not filled in")
 	}
 }
+
+func TestClaudeSettingsKeepTheirMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	os.WriteFile(path, []byte(`{}`), 0o600)
+	if err := claude(path, "/bin/stackk", func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
+		t.Errorf("settings.json became %v", st.Mode().Perm())
+	}
+}

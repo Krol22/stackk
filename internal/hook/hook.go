@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/krol22/stackk/internal/safe"
 	"github.com/krol22/stackk/internal/store"
 )
 
@@ -130,6 +131,7 @@ func question(input json.RawMessage) string {
 // OneLine returns the first non-empty line, whitespace-collapsed, at most 200 runes.
 func OneLine(s string) string {
 	for _, line := range strings.Split(s, "\n") {
+		line = safe.Text(line)
 		line = strings.Join(strings.Fields(line), " ")
 		if line == "" {
 			continue

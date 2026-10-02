@@ -31,7 +31,7 @@ func (c Client) Run(a ...string) (string, error) {
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
-	if f := os.Getenv("STACKK_TRACE"); f != "" && a[0] != "list-panes" && a[0] != "display-message" && a[0] != "list-clients" && a[0] != "capture-pane" {
+	if f := os.Getenv("STACKK_TRACE"); f != "" && (os.Getenv("STACKK_TRACE_ALL") != "" || (a[0] != "list-panes" && a[0] != "display-message" && a[0] != "list-clients" && a[0] != "capture-pane")) {
 		if fh, ferr := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); ferr == nil {
 			fmt.Fprintf(fh, "%s pid=%d tmux %s err=%v\n", time.Now().Format("15:04:05.000"), os.Getpid(), strings.Join(a, " "), err)
 			fh.Close()
@@ -55,13 +55,6 @@ func (c Client) Chain(cmds ...[]string) error {
 	}
 	_, err := c.Run(args...)
 	return err
-}
-
-// Command returns an exec.Cmd for interactive use (attach).
-func (c Client) Command(a ...string) *exec.Cmd {
-	cmd := exec.Command("tmux", c.args(a)...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return cmd
 }
 
 // Fields runs a -F query and splits each output line on tabs.
@@ -99,19 +92,20 @@ type Pane struct {
 	Width, SlotOf                                                   string
 	Active                                                          bool
 	SetName                                                         string // window name stackk last set (@stackk_wname)
+	OfStack                                                         string // the stack a dashboard pane shows (@stackk_stack)
 }
 
 var paneFmt = F("pane_id", "window_id", "session_id", "session_name", "window_name", "pane_current_command",
 	"pane_current_path", "pane_dead", "@stackk_task", "@stackk_run", "@stackk_role", "@stackk", "window_index", "pane_pid",
-	"@stackk_ui", "window_zoomed_flag", "pane_width", "@stackk_slot", "pane_active", "@stackk_wname")
+	"@stackk_ui", "window_zoomed_flag", "pane_width", "@stackk_slot", "pane_active", "@stackk_wname", "@stackk_stack")
 
 func parsePane(r []string) Pane {
-	for len(r) < 20 {
+	for len(r) < 21 {
 		r = append(r, "")
 	}
 	return Pane{ID: r[0], WindowID: r[1], SessionID: r[2], SessionName: r[3], WindowName: r[4], Command: r[5],
 		Path: r[6], Dead: r[7] == "1", Task: r[8], Run: r[9], Role: r[10], Stack: r[11] == "1", WindowIndex: r[12], PID: r[13],
-		UIWindow: r[14] == "1", Zoomed: r[15] == "1", Width: r[16], SlotOf: r[17], Active: r[18] == "1", SetName: r[19]}
+		UIWindow: r[14] == "1", Zoomed: r[15] == "1", Width: r[16], SlotOf: r[17], Active: r[18] == "1", SetName: r[19], OfStack: r[20]}
 }
 
 func (c Client) Pane(target string) (Pane, error) {
@@ -123,6 +117,19 @@ func (c Client) Pane(target string) (Pane, error) {
 		return Pane{}, fmt.Errorf("no pane %s", target)
 	}
 	return parsePane(rows[0]), nil
+}
+
+// WindowPanes lists the panes of one window (cheaper than AllPanes when that is all you need).
+func (c Client) WindowPanes(target string) ([]Pane, error) {
+	rows, err := c.Fields("list-panes", "-t", target, "-F", paneFmt)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Pane, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, parsePane(r))
+	}
+	return out, nil
 }
 
 func (c Client) AllPanes() ([]Pane, error) {
@@ -140,21 +147,19 @@ func (c Client) AllPanes() ([]Pane, error) {
 type Session struct {
 	ID, Name string
 	Stack    bool
-	Windows  string
-	Attached bool
 }
 
 func (c Client) Sessions() ([]Session, error) {
-	rows, err := c.Fields("list-sessions", "-F", F("session_id", "session_name", "@stackk", "session_windows", "session_attached"))
+	rows, err := c.Fields("list-sessions", "-F", F("session_id", "session_name", "@stackk"))
 	if err != nil {
 		return nil, err
 	}
 	var out []Session
 	for _, r := range rows {
-		for len(r) < 5 {
+		for len(r) < 3 {
 			r = append(r, "")
 		}
-		out = append(out, Session{ID: r[0], Name: r[1], Stack: r[2] == "1", Windows: r[3], Attached: r[4] != "0" && r[4] != ""})
+		out = append(out, Session{ID: r[0], Name: r[1], Stack: r[2] == "1"})
 	}
 	return out, nil
 }

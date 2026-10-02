@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -55,6 +56,12 @@ CREATE TABLE IF NOT EXISTS events (
   detail  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS events_task ON events(task_id, id);
+CREATE TABLE IF NOT EXISTS session_index (
+  path TEXT PRIMARY KEY,
+  mod  INTEGER NOT NULL,
+  size INTEGER NOT NULL,
+  data TEXT NOT NULL
+);
 `
 
 type Task struct {
@@ -97,7 +104,13 @@ func DefaultPath() string {
 }
 
 func Open(path string) (*DB, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// The DB keeps excerpts of your prompts and the agents' replies (Claude's own transcripts are
+	// 0600): the directory is private to you, which covers the DB, its WAL and errors.log.
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, err
 	}
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(1000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)", path)
@@ -106,14 +119,41 @@ func Open(path string) (*DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, err
 	}
-	// Columns added after the first release.
-	db.Exec(`ALTER TABLE tasks ADD COLUMN paused_at INTEGER NOT NULL DEFAULT 0`)
-	db.Exec(`ALTER TABLE tasks ADD COLUMN hidden_at INTEGER NOT NULL DEFAULT 0`)
 	return &DB{db}, nil
+}
+
+// schemaVersion is bumped with every schema change. Open runs the schema only when the stored
+// version is older, so the common path (a hook opening the DB) costs one PRAGMA read.
+const schemaVersion = 2
+
+// Columns added after the first release, for databases created before them.
+var addedColumns = []string{
+	`ALTER TABLE tasks ADD COLUMN paused_at INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE tasks ADD COLUMN hidden_at INTEGER NOT NULL DEFAULT 0`,
+}
+
+func migrate(db *sql.DB) error {
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return err
+	}
+	if v >= schemaVersion {
+		return nil
+	}
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	for _, alter := range addedColumns {
+		if _, err := db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("migrate: %w", err)
+		}
+	}
+	_, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion))
+	return err
 }
 
 const taskCols = `id, name, cwd, agent, COALESCE(agent_session_id,''), session_path, stack, deferred,
@@ -189,11 +229,6 @@ func UpdateTask(q Querier, t Task) error {
 	return err
 }
 
-func DeleteTask(q Querier, id string) error {
-	_, err := q.Exec(`DELETE FROM tasks WHERE id = ?`, id)
-	return err
-}
-
 func LogEvent(q Querier, e EventRow) error {
 	if e.TS == 0 {
 		e.TS = time.Now().Unix()
@@ -212,6 +247,19 @@ func LastHookEvent(q Querier, taskID string) (string, error) {
 		return "", ErrNotFound
 	}
 	return ev, err
+}
+
+// CachedSession returns the indexed data for a session file if it has not changed since.
+func CachedSession(q Querier, path string, mod, size int64) (string, bool) {
+	var data string
+	err := q.QueryRow(`SELECT data FROM session_index WHERE path = ? AND mod = ? AND size = ?`, path, mod, size).Scan(&data)
+	return data, err == nil
+}
+
+func CacheSession(q Querier, path string, mod, size int64, data string) error {
+	_, err := q.Exec(`INSERT INTO session_index (path, mod, size, data) VALUES (?,?,?,?)
+  ON CONFLICT(path) DO UPDATE SET mod=excluded.mod, size=excluded.size, data=excluded.data`, path, mod, size, data)
+	return err
 }
 
 // Tasks returns non-archived tasks, all stacks when stack is empty.
@@ -272,7 +320,9 @@ func Events(q Querier, stack, taskID string, limit int) ([]EventRow, error) {
 }
 
 // Tx runs fn in a write transaction (BEGIN IMMEDIATE, so concurrent hooks queue on busy_timeout).
-func (db *DB) Tx(fn func(q Querier) error) error {
+// The connection never goes back to the pool with a transaction open: with one connection that
+// would block every later write until restart.
+func (db *DB) Tx(fn func(q Querier) error) (err error) {
 	conn, err := db.DB.Conn(ctxBG)
 	if err != nil {
 		return err
@@ -281,12 +331,23 @@ func (db *DB) Tx(fn func(q Querier) error) error {
 	if _, err := conn.ExecContext(ctxBG, `BEGIN IMMEDIATE`); err != nil {
 		return err
 	}
+	done := false
+	defer func() {
+		if !done {
+			conn.ExecContext(ctxBG, `ROLLBACK`)
+		}
+		if r := recover(); r != nil {
+			err = fmt.Errorf("transaction panicked: %v", r)
+		}
+	}()
 	if err := fn(connQ{conn}); err != nil {
-		conn.ExecContext(ctxBG, `ROLLBACK`)
 		return err
 	}
-	_, err = conn.ExecContext(ctxBG, `COMMIT`)
-	return err
+	if _, err := conn.ExecContext(ctxBG, `COMMIT`); err != nil {
+		return err
+	}
+	done = true
+	return nil
 }
 
 func b2i(b bool) int {
