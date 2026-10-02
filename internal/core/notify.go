@@ -39,7 +39,7 @@ func (n *Notifier) Check(a *App, stack, uiPane, out string) {
 	for _, t := range tasks {
 		byID[t.ID] = t
 		onStack := store.InStack(&t)
-		running := !onStack && t.Phase == store.PhaseWorking && t.RunState == store.RunLive && !t.Deferred && t.PausedAt == 0 && t.HiddenAt == 0
+		running := store.View(t) == store.ViewRunning && t.RunState == store.RunLive
 		if n.prev[t.ID] && onStack {
 			n.pending[t.ID] = t.QueuedAt
 		}

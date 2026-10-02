@@ -26,6 +26,35 @@ type Event struct {
 	WaitingKind    string
 }
 
+// The list a task shows up in. Hidden and paused are out of every list (the ⏸ modal),
+// deferred is SCHEDULED, exited sits with SCHEDULED as finished.
+const (
+	ViewStack    = "stack"
+	ViewRunning  = "running"
+	ViewDeferred = "deferred"
+	ViewExited   = "exited"
+	ViewPaused   = "paused"
+	ViewHidden   = "hidden"
+)
+
+// View names the list a task shows up in.
+func View(t Task) string {
+	switch {
+	case t.HiddenAt != 0:
+		return ViewHidden
+	case t.PausedAt != 0:
+		return ViewPaused
+	case t.Deferred:
+		return ViewDeferred
+	case t.RunState == RunExited:
+		return ViewExited
+	case InStack(&t):
+		return ViewStack
+	default:
+		return ViewRunning
+	}
+}
+
 func InStack(t *Task) bool {
 	if t.Deferred || t.ArchivedAt != 0 || t.PausedAt != 0 || t.HiddenAt != 0 || t.RunState != RunLive {
 		return false

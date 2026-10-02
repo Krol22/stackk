@@ -156,18 +156,55 @@ func migrate(db *sql.DB) error {
 	return err
 }
 
-const taskCols = `id, name, cwd, agent, COALESCE(agent_session_id,''), session_path, stack, deferred,
-  phase, waiting_kind, waiting_tool_use_id, phase_since, queued_at, last_msg, last_tool, last_tool_at,
-  last_event_at, run_id, run_state, run_started_at, tmux_pane, home_window, error, note, archived_at, created_at, paused_at, hidden_at`
+// taskFields are the task columns besides id and created_at, in the order of taskArgs and
+// scanTask. agent_session_id is stored as NULL when empty so its unique index allows many.
+var taskFields = []string{"name", "cwd", "agent", "agent_session_id", "session_path", "stack", "deferred",
+	"phase", "waiting_kind", "waiting_tool_use_id", "phase_since", "queued_at", "last_msg", "last_tool", "last_tool_at",
+	"last_event_at", "run_id", "run_state", "run_started_at", "tmux_pane", "home_window", "error", "note", "archived_at",
+	"paused_at", "hidden_at"}
+
+func taskArgs(t Task) []any {
+	return []any{t.Name, t.Cwd, t.Agent, t.AgentSessionID, t.SessionPath, t.Stack, b2i(t.Deferred),
+		t.Phase, t.WaitingKind, t.WaitingToolUseID, t.PhaseSince, t.QueuedAt, t.LastMsg, t.LastTool, t.LastToolAt,
+		t.LastEventAt, t.RunID, t.RunState, t.RunStartedAt, t.TmuxPane, t.HomeWindow, t.Error, t.Note, t.ArchivedAt,
+		t.PausedAt, t.HiddenAt}
+}
+
+func placeholder(col string) string {
+	if col == "agent_session_id" {
+		return "NULLIF(?,'')"
+	}
+	return "?"
+}
+
+var taskCols, insertTaskSQL, updateTaskSQL = func() (string, string, string) {
+	sel := []string{"id", "created_at"}
+	vals := []string{"?", "?"}
+	var sets []string
+	for _, c := range taskFields {
+		if c == "agent_session_id" {
+			sel = append(sel, "COALESCE(agent_session_id,'')")
+		} else {
+			sel = append(sel, c)
+		}
+		vals = append(vals, placeholder(c))
+		sets = append(sets, c+"="+placeholder(c))
+	}
+	cols := strings.Join(append([]string{"id", "created_at"}, taskFields...), ", ")
+	return strings.Join(sel, ", "),
+		"INSERT INTO tasks (" + cols + ") VALUES (" + strings.Join(vals, ",") + ")",
+		"UPDATE tasks SET " + strings.Join(sets, ", ") + " WHERE id=?"
+}()
 
 type scanner interface{ Scan(...any) error }
 
 func scanTask(s scanner) (Task, error) {
 	var t Task
 	var deferred int
-	err := s.Scan(&t.ID, &t.Name, &t.Cwd, &t.Agent, &t.AgentSessionID, &t.SessionPath, &t.Stack, &deferred,
+	err := s.Scan(&t.ID, &t.CreatedAt, &t.Name, &t.Cwd, &t.Agent, &t.AgentSessionID, &t.SessionPath, &t.Stack, &deferred,
 		&t.Phase, &t.WaitingKind, &t.WaitingToolUseID, &t.PhaseSince, &t.QueuedAt, &t.LastMsg, &t.LastTool, &t.LastToolAt,
-		&t.LastEventAt, &t.RunID, &t.RunState, &t.RunStartedAt, &t.TmuxPane, &t.HomeWindow, &t.Error, &t.Note, &t.ArchivedAt, &t.CreatedAt, &t.PausedAt, &t.HiddenAt)
+		&t.LastEventAt, &t.RunID, &t.RunState, &t.RunStartedAt, &t.TmuxPane, &t.HomeWindow, &t.Error, &t.Note, &t.ArchivedAt,
+		&t.PausedAt, &t.HiddenAt)
 	t.Deferred = deferred != 0
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNotFound
@@ -201,13 +238,7 @@ func FindByPane(q Querier, pane string) (Task, error) {
 }
 
 func InsertTask(q Querier, t Task) error {
-	_, err := q.Exec(`INSERT INTO tasks (id, name, cwd, agent, agent_session_id, session_path, stack, deferred,
-  phase, waiting_kind, waiting_tool_use_id, phase_since, queued_at, last_msg, last_tool, last_tool_at,
-  last_event_at, run_id, run_state, run_started_at, tmux_pane, home_window, error, note, archived_at, created_at, paused_at, hidden_at)
-  VALUES (?,?,?,?,NULLIF(?,''),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		t.ID, t.Name, t.Cwd, t.Agent, t.AgentSessionID, t.SessionPath, t.Stack, b2i(t.Deferred),
-		t.Phase, t.WaitingKind, t.WaitingToolUseID, t.PhaseSince, t.QueuedAt, t.LastMsg, t.LastTool, t.LastToolAt,
-		t.LastEventAt, t.RunID, t.RunState, t.RunStartedAt, t.TmuxPane, t.HomeWindow, t.Error, t.Note, t.ArchivedAt, t.CreatedAt, t.PausedAt, t.HiddenAt)
+	_, err := q.Exec(insertTaskSQL, append([]any{t.ID, t.CreatedAt}, taskArgs(t)...)...)
 	return err
 }
 
@@ -219,13 +250,7 @@ func UpdateTask(q Querier, t Task) error {
 			return err
 		}
 	}
-	_, err := q.Exec(`UPDATE tasks SET name=?, cwd=?, agent=?, agent_session_id=NULLIF(?,''), session_path=?, stack=?, deferred=?,
-  phase=?, waiting_kind=?, waiting_tool_use_id=?, phase_since=?, queued_at=?, last_msg=?, last_tool=?, last_tool_at=?,
-  last_event_at=?, run_id=?, run_state=?, run_started_at=?, tmux_pane=?, home_window=?, error=?, note=?, archived_at=?, paused_at=?, hidden_at=?
-  WHERE id=?`,
-		t.Name, t.Cwd, t.Agent, t.AgentSessionID, t.SessionPath, t.Stack, b2i(t.Deferred),
-		t.Phase, t.WaitingKind, t.WaitingToolUseID, t.PhaseSince, t.QueuedAt, t.LastMsg, t.LastTool, t.LastToolAt,
-		t.LastEventAt, t.RunID, t.RunState, t.RunStartedAt, t.TmuxPane, t.HomeWindow, t.Error, t.Note, t.ArchivedAt, t.PausedAt, t.HiddenAt, t.ID)
+	_, err := q.Exec(updateTaskSQL, append(taskArgs(t), t.ID)...)
 	return err
 }
 

@@ -252,7 +252,7 @@ func ls(app *core.App, args []string) error {
 		}
 		out := []row{}
 		for _, t := range tasks {
-			out = append(out, row{t, names[t.Stack], ui.ViewOf(t)})
+			out = append(out, row{t, names[t.Stack], store.View(t)})
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -263,7 +263,7 @@ func ls(app *core.App, args []string) error {
 		if agent == "" {
 			agent = "shell"
 		}
-		fmt.Printf("%-10s %-24s %-7s %-8s %-8s %-8s %s\n", names[t.Stack], t.ID, agent, ui.ViewOf(t), t.Phase, t.RunState, t.LastMsg)
+		fmt.Printf("%-10s %-24s %-7s %-8s %-8s %-8s %s\n", names[t.Stack], t.ID, agent, store.View(t), t.Phase, t.RunState, t.LastMsg)
 	}
 	return nil
 }
