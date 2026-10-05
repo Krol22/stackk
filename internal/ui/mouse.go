@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/krol22/stackk/internal/tmux"
 )
 
 func (m *stackModel) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
@@ -106,9 +107,12 @@ func (m *stackModel) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.paused = true
 		return m, nil
 	case in("b:take", msg):
-		if c, err := m.app.Candidates(); err == nil {
-			m.take = c
+		c, err := m.app.Candidates()
+		if err != nil {
+			m.setStatus(err.Error(), true)
+			return m, nil
 		}
+		m.take = append([]tmux.Pane{}, c...) // never nil: nil means the modal is closed
 		return m, nil
 	case in("b:close", msg):
 		return m, m.closeDrawer()

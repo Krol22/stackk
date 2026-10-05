@@ -98,6 +98,11 @@ kill -9 "$(t list-panes -a -F '#{@stackk_role} #{pane_pid}' | awk '$1=="tui"{pri
 t new-window -t scratch: -n ui2 "$S/bin/stackk work"; sleep 3
 check "restart recovers: agent back in the stack, one TUI, one slot" '[ "$(t list-panes -a -F "#{session_name} #{@stackk_task}" | awk "\$2 ~ /^beta-/ {print \$1}")" = work ] && [ "$(t list-panes -a -F "#{@stackk_role}" | grep -c tui)" = 1 ] && [ "$(t list-panes -a -F "#{@stackk_role}" | grep -c slot)" = 1 ]'
 
+step "⇲ add windows with nothing to add"
+hclickon "add windows"; sleep 1.5
+check "the modal opens and says so" 'hv | grep -q "no agent windows outside the stack"'
+hclickon "done"; sleep 1
+
 step "agent in another session → ⇲ add windows (modal)"
 t new-window -d -t scratch: -n gamma -c "$S/work/gamma" claude; sleep 1.5
 hclickon "add windows"; sleep 1.5
