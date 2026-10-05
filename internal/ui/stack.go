@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/krol22/stackk/internal/config"
 	"github.com/krol22/stackk/internal/core"
 	"github.com/krol22/stackk/internal/store"
 	"github.com/krol22/stackk/internal/tmux"
@@ -62,6 +63,13 @@ type stackModel struct {
 	loadSeq       int  // last load started
 	appliedSeq    int  // newest load (or user action) the view reflects
 	lastFull      time.Time
+	canvas        string // the program sharing the window, below the dashboard ("" for none)
+	cfgCanvas     string // the canvas in the config file when last read
+	canvasWant    int    // dashboard height last asked of tmux
+	canvasForce   bool   // shown on request although the stack is not empty, until a task comes back
+	stackN        int    // tasks on the stack at the last update
+	side          string // in the RUNNING column process: its own pane
+	away          string // the RUNNING column is holding a task's place in its home window: that window's name
 }
 
 type dataMsg struct {
@@ -72,6 +80,8 @@ type dataMsg struct {
 	backendDown bool
 	full        bool
 	err         error
+	canvas      *string // the config's canvas, read on full loads
+	away        *string // RUNNING column: "" when beside the stack, else the window it is in
 }
 
 type doneMsg struct {
@@ -90,13 +100,17 @@ func RunStack(app *core.App, stack, uiPane string) error {
 	if uiPane == "" {
 		return fmt.Errorf("stackk runs inside tmux: start it in any pane")
 	}
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("%s: %v", config.Path(), err)
+	}
 	s, err := app.EnsureStack(stack)
 	if err != nil {
 		return err
 	}
 	zone.NewGlobal()
-	m := &stackModel{app: app, drawer: &core.Drawer{A: app, UI: uiPane, Stack: s.ID}, rec: core.NewReconciler(),
-		notes: core.NewNotifier(), stackID: s.ID, stackName: s.Name, ops: make(chan func(), 64)}
+	m := &stackModel{app: app, drawer: &core.Drawer{A: app, UI: uiPane, Stack: s.ID, Canvas: cfg.Canvas}, rec: core.NewReconciler(),
+		notes: core.NewNotifier(), stackID: s.ID, stackName: s.Name, ops: make(chan func(), 64), canvas: cfg.Canvas, cfgCanvas: cfg.Canvas}
 	if err := m.drawer.Ensure(); err != nil {
 		return err
 	}
@@ -109,24 +123,70 @@ func RunStack(app *core.App, stack, uiPane string) error {
 	return err
 }
 
-func (m *stackModel) Init() tea.Cmd { return tea.Batch(m.load(true), tick()) }
+// RunSide runs the RUNNING column, which is the drawer's placeholder when a canvas sits under the
+// stack: opening a task swaps the agent into its place. Swapped into the task's home window, it
+// holds that window like any placeholder.
+func RunSide(app *core.App, pane, stack string) error {
+	panes, err := app.T.WindowPanes(pane)
+	if err != nil {
+		return err
+	}
+	var ui tmux.Pane
+	for _, p := range panes {
+		if p.Role == "tui" {
+			ui = p
+		}
+	}
+	if ui.ID == "" {
+		return fmt.Errorf("no dashboard next to %s", pane)
+	}
+	zone.NewGlobal()
+	m := &stackModel{app: app, drawer: app.DrawerOf(ui, stack), stackID: stack, side: pane,
+		ops: make(chan func(), 64)}
+	go func() {
+		for op := range m.ops {
+			op()
+		}
+	}()
+	_, err = tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion()).Run()
+	return err
+}
+
+func (m *stackModel) Init() tea.Cmd { return tea.Batch(m.load(m.side == ""), tick()) }
 
 // load reads the state in the background. Loads are numbered so a slow one can never overwrite
 // newer data, and full ones (reconcile, notifications) never overlap: the tick only starts one
 // when the previous has come back.
 func (m *stackModel) load(full bool) tea.Cmd {
-	app, drawer, rec, notes, stack := m.app, m.drawer, m.rec, m.notes, m.stackID
+	app, drawer, rec, notes, stack, side := m.app, m.drawer, m.rec, m.notes, m.stackID, m.side
 	m.loadSeq++
 	seq := m.loadSeq
+	if side != "" {
+		full = false // reconcile, repairs and notifications are the dashboard's job
+	}
 	return func() tea.Msg {
 		d := dataMsg{seq: seq, full: full}
+		if side != "" {
+			p, err := app.T.Pane(side)
+			if err != nil {
+				d.err = err
+				return d
+			}
+			away := ""
+			if !p.UIWindow {
+				away = p.WindowName
+			}
+			d.away = &away
+		}
 		if full {
 			if err := rec.Run(app); err == core.ErrBackend {
 				d.backendDown = true
 			}
 			drawer.Ensure()
 		}
-		d.out = drawer.Out()
+		if side == "" {
+			d.out = drawer.Out()
+		}
 		if full {
 			notes.Check(app, stack, drawer.UI, d.out)
 		}
@@ -138,6 +198,11 @@ func (m *stackModel) load(full bool) tea.Cmd {
 		if d.events, err = store.Events(app.DB, stack, "", 30); err != nil {
 			d.err = err
 			return d
+		}
+		if full {
+			if cfg, err := config.Load(); err == nil {
+				d.canvas = &cfg.Canvas
+			}
 		}
 		if full { // the stack can be renamed; no need to ask every second
 			if ss, err := app.T.Sessions(); err == nil {
@@ -166,14 +231,39 @@ func (m *stackModel) run(fn func() (string, error)) tea.Cmd {
 func (m *stackModel) setStatus(s string, isErr bool) { m.status, m.statusErr = s, isErr }
 
 func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	if _, resized := msg.(tea.WindowSizeMsg); resized {
+		m.canvasWant = 0 // the window may have changed: check again
+	}
+	if n := len(m.sorted("stack")); n != m.stackN {
+		if n > m.stackN {
+			m.canvasForce = false // a task came back: the STACK list is the news
+		}
+		m.stackN = n
+	}
+	if m.canvas == "" || m.width == 0 {
+		return model, cmd
+	}
+	if want := m.dashLines(); want != m.canvasWant {
+		m.canvasWant = want
+		d := m.drawer
+		cmd = tea.Batch(cmd, m.run(func() (string, error) { return "", d.FitCanvas(want) }))
+	}
+	return model, cmd
+}
+
+func (m *stackModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.side != "" {
+			return m, m.load(false) // swapped in or out of the dashboard: show where it is now
+		}
 	case tickMsg:
 		cmds := []tea.Cmd{tick()}
 		if !m.loading {
 			m.loading = true
-			full := !m.fullRunning && time.Since(m.lastFull) >= 5*time.Second
+			full := !m.fullRunning && time.Since(m.lastFull) >= 5*time.Second && m.side == ""
 			if full {
 				m.lastFull, m.fullRunning = time.Now(), true
 			}
@@ -195,8 +285,15 @@ func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.appliedSeq = msg.seq
 		m.tasks, m.events, m.out = msg.tasks, msg.events, msg.out
+		if msg.away != nil {
+			m.away = *msg.away
+		}
 		if msg.name != "" {
 			m.stackName = msg.name
+		}
+		if msg.canvas != nil && *msg.canvas != m.cfgCanvas { // `stackk canvas` changed the config
+			m.cfgCanvas = *msg.canvas
+			return m, m.setCanvas(m.cfgCanvas)
 		}
 	case doneMsg:
 		if msg.quit {
@@ -292,8 +389,14 @@ func (m *stackModel) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "esc":
 		m.menu, m.take, m.paused = nil, nil, false
+	case "enter":
+		if m.away != "" {
+			return m, m.recall()
+		}
 	case "q", "ctrl+c":
-		return m, m.quit()
+		if m.side == "" { // the RUNNING column must keep its window alive
+			return m, m.quit()
+		}
 	}
 	return m, nil
 }
@@ -307,4 +410,10 @@ func (m *stackModel) byID(id string) (store.Task, bool) {
 		}
 	}
 	return store.Task{}, false
+}
+
+// recall brings the task back from the drawer into the window the RUNNING column is holding.
+func (m *stackModel) recall() tea.Cmd {
+	app, pane := m.app, m.side
+	return m.run(func() (string, error) { return "", app.Recall(pane) })
 }

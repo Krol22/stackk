@@ -60,7 +60,19 @@ Window names carry the state, both ways: stackk appends ` st` (scheduled) and ` 
 | paused | `⏸` modal | hidden until you bring it back; the agent keeps running |
 | hidden | `⏸` modal | not a task at all (notes, an editor) |
 
-CLI: `stackk ls [-json]`, `stackk log [task]`, `stackk new <folder> [prompt]`, `stackk take`, `stackk find [-ai] <query>`, `stackk attach <session>`, `stackk pause|resume|hide|unhide|rm <task>`, `stackk focus [task]`, `stackk test-notify`.
+### Canvas
+
+Any terminal program can take the STACK box's place while nothing waits for you, e.g. an ebook reader while your agents work. Click **▤ canvas** and enter a command, or run:
+
+```
+stackk canvas bookokrat ~/books/current.epub   # stackk canvas off to remove it
+```
+
+It's saved in `~/.config/stackk/config.json`, and **▤ canvas** hides and shows it.
+
+RUNNING and SCHEDULED stay beside it. When a session comes back to the stack, the canvas steps aside for the STACK list and returns once the stack is empty again. It keeps running the whole time, so your book stays on its page. Images work: stackk turns on tmux passthrough for the canvas pane. If the program exits, press Enter to start it again.
+
+CLI: `stackk ls [-json]`, `stackk log [task]`, `stackk new <folder> [prompt]`, `stackk take`, `stackk find [-ai] <query>`, `stackk attach <session>`, `stackk pause|resume|hide|unhide|rm <task>`, `stackk focus [task]`, `stackk canvas [<command>|off]`, `stackk test-notify`.
 
 ## How it works
 

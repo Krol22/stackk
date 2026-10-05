@@ -87,10 +87,15 @@ func (m *stackModel) viewMenu() string {
 
 func (m *stackModel) viewEdit(w int) string {
 	title := "Rename"
-	if m.edit.kind == "note" {
+	var hint []string
+	switch m.edit.kind {
+	case "note":
 		title = "Note"
+	case "canvas":
+		title = "Canvas"
+		hint = []string{"", " " + sGrey.Render("a program to show while the stack is empty, e.g. an ebook reader")}
 	}
-	lines := []string{"", " " + m.edit.input.View(), "",
-		" " + zone.Mark("e:cancel", button("cancel", false)) + " " + zone.Mark("e:ok", button("save", true))}
+	lines := append(hint, "", " "+m.edit.input.View(), "",
+		" "+zone.Mark("e:cancel", button("cancel", false))+" "+zone.Mark("e:ok", button("save", true)))
 	return box(title, sBright, "", lines, w, len(lines)+2)
 }

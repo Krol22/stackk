@@ -1,6 +1,6 @@
 PREFIX ?= $(HOME)/.local/bin
 
-.PHONY: build install setup test e2e perf demo screenshots
+.PHONY: build install setup test e2e perf demo demo-canvas screenshots
 
 build:
 	go build -o bin/stackk ./cmd/stackk
@@ -22,6 +22,7 @@ e2e:
 	STACKK_QUIET_SECS=6 bash testdata/lifecycle.sh
 	STACKK_QUIET_SECS=6 bash testdata/find.sh
 	bash testdata/security.sh
+	bash testdata/canvas.sh
 
 # Performance budget (tmux calls per minute, hook latency).
 perf:
@@ -30,6 +31,10 @@ perf:
 # Records the e2e run to recordings/stackk-e2e.mp4 (needs vhs).
 demo:
 	vhs testdata/demo.tape
+
+# Records the canvas with a real ebook reader to recordings/stackk-canvas.mp4 (needs vhs, bookokrat).
+demo-canvas:
+	vhs testdata/canvas.tape
 
 # Regenerates the README screenshots in docs/ (needs vhs; runs on its own tmux server).
 screenshots:

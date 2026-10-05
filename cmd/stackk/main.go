@@ -34,6 +34,7 @@ const usage = `stackk — a round-robin stack of AI sessions in tmux
   stackk pause <task>                 hide a session (it keeps running)
   stackk hide|unhide <task>           take a window that is not a task out of the lists
   stackk rm <task>                    close the task's window and remove it for good
+  stackk canvas [<command>|off]       a program under the dashboard, e.g. an ebook reader
   stackk mark <claude|omp>            from agent hooks (payload on stdin)
 `
 
@@ -49,7 +50,21 @@ func main() {
 	}
 	switch cmd {
 	case "slot":
-		slot(os.Getenv("TMUX_PANE"))
+		if len(args) == 2 && args[0] == "side" {
+			if app, err := open(); err == nil {
+				if err = ui.RunSide(app, os.Getenv("TMUX_PANE"), args[1]); err == nil {
+					return
+				}
+				logErr(err)
+			}
+		}
+		slot(os.Getenv("TMUX_PANE")) // a plain placeholder still holds the window
+		return
+	case "canvas-run":
+		canvasRun(strings.Join(args, " "))
+		return
+	case "canvas":
+		canvasCmd(args)
 		return
 	case "hold":
 		name := core.DefaultStack()

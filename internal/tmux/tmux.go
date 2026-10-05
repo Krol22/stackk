@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -93,19 +94,23 @@ type Pane struct {
 	Active                                                          bool
 	SetName                                                         string // window name stackk last set (@stackk_wname)
 	OfStack                                                         string // the stack a dashboard pane shows (@stackk_stack)
+	Height, WinHeight, WinWidth                                     int
+	SlotKind                                                        string // "side" for a placeholder that shows RUNNING (@stackk_slotkind)
 }
 
 var paneFmt = F("pane_id", "window_id", "session_id", "session_name", "window_name", "pane_current_command",
 	"pane_current_path", "pane_dead", "@stackk_task", "@stackk_run", "@stackk_role", "@stackk", "window_index", "pane_pid",
-	"@stackk_ui", "window_zoomed_flag", "pane_width", "@stackk_slot", "pane_active", "@stackk_wname", "@stackk_stack")
+	"@stackk_ui", "window_zoomed_flag", "pane_width", "@stackk_slot", "pane_active", "@stackk_wname", "@stackk_stack",
+	"pane_height", "window_height", "window_width", "@stackk_slotkind")
 
 func parsePane(r []string) Pane {
-	for len(r) < 21 {
+	for len(r) < 25 {
 		r = append(r, "")
 	}
 	return Pane{ID: r[0], WindowID: r[1], SessionID: r[2], SessionName: r[3], WindowName: r[4], Command: r[5],
 		Path: r[6], Dead: r[7] == "1", Task: r[8], Run: r[9], Role: r[10], Stack: r[11] == "1", WindowIndex: r[12], PID: r[13],
-		UIWindow: r[14] == "1", Zoomed: r[15] == "1", Width: r[16], SlotOf: r[17], Active: r[18] == "1", SetName: r[19], OfStack: r[20]}
+		UIWindow: r[14] == "1", Zoomed: r[15] == "1", Width: r[16], SlotOf: r[17], Active: r[18] == "1", SetName: r[19], OfStack: r[20],
+		Height: atoi(r[21]), WinHeight: atoi(r[22]), WinWidth: atoi(r[23]), SlotKind: r[24]}
 }
 
 func (c Client) Pane(target string) (Pane, error) {
@@ -195,4 +200,9 @@ func isVersion(s string) bool {
 		}
 	}
 	return dots == 2
+}
+
+func atoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }

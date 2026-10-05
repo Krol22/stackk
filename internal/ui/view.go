@@ -40,6 +40,12 @@ func (m *stackModel) View() string {
 	}
 	var base string
 	switch {
+	case m.side != "" && m.away != "":
+		base = m.viewAway()
+	case m.side != "":
+		base = m.viewRunningColumn()
+	case m.canvas != "" && m.out == "":
+		base = m.viewStackColumn()
 	case m.width < 100:
 		base = m.viewSidebar()
 	default:
@@ -68,6 +74,9 @@ func (m *stackModel) View() string {
 	}
 	if m.edit != nil {
 		w := 50
+		if m.edit.kind == "canvas" {
+			w = min(m.width-2, 76)
+		}
 		s = zone.Scan(overlay(s, m.viewEdit(w), max(0, (m.width-w)/2), max(0, m.height/2-3)))
 	}
 	return s
@@ -189,9 +198,17 @@ func (m *stackModel) header(w int) string {
 		}
 		right = zone.Mark("b:paused", button(label, false)) + " "
 	}
+	right += zone.Mark("b:canvas", button("▤ canvas", m.canvas != "")) + " "
 	right += zone.Mark("b:find", button("⌕ find", false)) + " " + zone.Mark("b:take", button("⇲ add windows", false)) + " " + zone.Mark("b:new", button("+ new", false)) + " " +
 		zone.Mark("b:next", button("next ▶", true)) + " "
 	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 { // narrow (beside the RUNNING column): drop the counts, they are on the boxes
+		left = " " + sBright.Render("STACKK") + sDim.Render(" · ") + sText.Render(fit(m.stackName, 16))
+		if n := len(m.sorted("stack")); n > 0 {
+			left += "  " + sYellow.Render(fmt.Sprintf("● %d waiting", n))
+		}
+		gap = w - lipgloss.Width(left) - lipgloss.Width(right)
+	}
 	if gap < 1 {
 		return padRight(left, w)
 	}
@@ -203,7 +220,7 @@ func (m *stackModel) viewFull() string {
 	const pad, gap = 1, 2 // outer margin and space between columns
 	inner := w - 2*pad
 	logH := 0
-	if h >= 28 {
+	if h >= 28 && m.canvas == "" {
 		logH = 7
 	}
 	// header, blank, body, [blank, log], status
@@ -236,7 +253,9 @@ func (m *stackModel) viewFull() string {
 	runLines, defLines := rows("running"), rows("deferred")
 	// RUNNING takes what SCHEDULED leaves, one blank line between boxes.
 	defH := 4
-	if len(defLines) > 0 {
+	if m.canvas != "" {
+		defH = boxNeed(defLines) // the dashboard is sized to fit everything
+	} else if len(defLines) > 0 {
 		defH = max(4, min(len(defLines)+3, bodyH/2))
 	}
 	runH := bodyH - defH - 1
@@ -294,8 +313,125 @@ func (m *stackModel) logLines(w, n int) []string {
 	return out
 }
 
+// canvasShown: the canvas has the STACK box's place, because the stack is empty or you asked.
+func (m *stackModel) canvasShown() bool {
+	return m.canvas != "" && (m.canvasForce || len(m.sorted("stack")) == 0)
+}
+
+func (m *stackModel) stackBoxNeed() int {
+	if len(m.sorted("stack")) == 0 {
+		return boxNeed(m.emptyStack(0))
+	}
+	return boxNeed(make([]string, 3*len(m.sorted("stack"))))
+}
+
+// viewStackColumn is the dashboard beside the RUNNING column. With an empty stack the canvas
+// takes the STACK box's place and only the header is left.
+func (m *stackModel) viewStackColumn() string {
+	w := m.width
+	if m.canvasShown() && m.height < 6 {
+		return m.header(w) + "\n"
+	}
+	var lines []string
+	for i, t := range m.sorted("stack") {
+		lines = append(lines, "")
+		lines = append(lines, m.taskRows(t, "stack", i+1, w-4)...)
+	}
+	if len(lines) == 0 {
+		lines = m.emptyStack(w - 4)
+	}
+	box := box("STACK", sYellow.Bold(true), "oldest first", lines, w-2, max(m.stackBoxNeed(), m.height-3))
+	box = " " + strings.ReplaceAll(box, "\n", "\n ")
+	return strings.Join([]string{m.header(w), "", box, m.statusLine(w)}, "\n")
+}
+
+// viewRunningColumn is the RUNNING column process's view.
+func (m *stackModel) viewRunningColumn() string {
+	w, h := m.width-1, m.height
+	rows := func(view string) []string {
+		var out []string
+		for _, t := range m.sorted(view) {
+			out = append(out, "")
+			out = append(out, m.taskRows(t, view, 0, w-2)...)
+		}
+		return out
+	}
+	runLines, defLines := rows("running"), rows("deferred")
+	logH := 0
+	if h >= 36 {
+		logH = 9
+	}
+	// two lines level with the dashboard's header, boxes with a blank line between them, status
+	bodyH := h - 3
+	if logH > 0 {
+		bodyH -= logH + 1
+	}
+	defH := 4
+	if len(defLines) > 0 {
+		defH = max(4, min(len(defLines)+3, bodyH/2))
+	}
+	parts := []string{"", "", box("RUNNING", sGrey.Bold(true), "do not disturb", runLines, w, bodyH-defH-1), "",
+		box("SCHEDULED", sPurple.Bold(true), "", defLines, w, defH)}
+	if logH > 0 {
+		parts = append(parts, "", box("LOG", sGrey.Bold(true), "", m.logLines(w-2, logH-2), w, logH))
+	}
+	return strings.Join(append(parts, m.statusLine(w)), "\n")
+}
+
+// viewAway is what the RUNNING column shows while it holds a task's window.
+func (m *stackModel) viewAway() string {
+	lines := make([]string, max(0, m.height/2-1))
+	center := func(s string, st lipgloss.Style) string {
+		return strings.Repeat(" ", max(0, (m.width-lipgloss.Width(s))/2)) + st.Render(s)
+	}
+	lines = append(lines, center(m.away+" is open in the stackk dashboard", sYellow),
+		center("press Enter or click to bring it back here", sGrey))
+	return strings.Join(lines, "\n")
+}
+
+// boxNeed is the height of a box showing all its lines.
+func boxNeed(lines []string) int { return max(4, len(lines)+2) }
+
+// dashLines is how tall the dashboard needs to be when a canvas takes the rest of the window.
+func (m *stackModel) dashLines() int {
+	if m.menu != nil || m.form != nil || m.find != nil || m.paused || m.take != nil || m.edit != nil {
+		return 1 << 16 // modals get the whole window
+	}
+	if !m.canvasShown() {
+		return 1 << 16 // the canvas takes an empty stack's place: tasks back, it steps aside
+	}
+	if m.out == "" {
+		return 2 // header and a blank line; RUNNING is beside it
+	}
+	if m.width < 100 {
+		return len(m.sidebarLines()) + 1
+	}
+	count := func(view string) []string { return make([]string, 3*len(m.sorted(view))) }
+	stackH := boxNeed(count("stack"))
+	if len(m.sorted("stack")) == 0 {
+		stackH = boxNeed(m.emptyStack(0))
+	}
+	right := boxNeed(count("running")) + 1 + boxNeed(count("deferred"))
+	return max(stackH, right) + 3 // header, blank line, status
+}
+
 func (m *stackModel) viewSidebar() string {
 	w, h := m.width, m.height
+	lines := m.sidebarLines()
+	if len(lines) > h-1 {
+		lines = lines[:h-1]
+	}
+	for len(lines) < h-1 {
+		lines = append(lines, "")
+	}
+	for i := range lines {
+		lines[i] = padRight(lines[i], w)
+	}
+	return strings.Join(append(lines, m.statusLine(w)), "\n")
+}
+
+func (m *stackModel) sidebarLines() []string {
+	w := m.width
 	var lines []string
 	lines = append(lines, " "+sBright.Render("STACKK")+sDim.Render(" · ")+sText.Render(m.stackName))
 	lines = append(lines, " "+sYellow.Render(fmt.Sprintf("● %d", len(m.sorted("stack"))))+"  "+
@@ -307,7 +443,7 @@ func (m *stackModel) viewSidebar() string {
 	if n := len(m.sorted("paused")) + len(m.sorted("hidden")); n > 0 {
 		lines = append(lines, "", " "+zone.Mark("b:paused", button(fmt.Sprintf("⏸ %d", n), false)))
 	}
-	lines = append(lines, "", " "+zone.Mark("b:find", button("⌕", false))+" "+zone.Mark("b:take", button("⇲", false))+" "+zone.Mark("b:new", button("+", false))+" "+
+	lines = append(lines, "", " "+zone.Mark("b:canvas", button("▤", m.canvas != ""))+" "+zone.Mark("b:find", button("⌕", false))+" "+zone.Mark("b:take", button("⇲", false))+" "+zone.Mark("b:new", button("+", false))+" "+
 		zone.Mark("b:next", button("next ▶", true)), "")
 	section := func(title string, st lipgloss.Style, view string) {
 		if view != "stack" {
@@ -329,17 +465,7 @@ func (m *stackModel) viewSidebar() string {
 	section("STACK", sYellow.Bold(true), "stack")
 	section("RUNNING", sGrey.Bold(true), "running")
 	section("SCHEDULED", sPurple.Bold(true), "deferred")
-
-	if len(lines) > h-1 {
-		lines = lines[:h-1]
-	}
-	for len(lines) < h-1 {
-		lines = append(lines, "")
-	}
-	for i := range lines {
-		lines[i] = padRight(lines[i], w)
-	}
-	return strings.Join(append(lines, m.statusLine(w)), "\n")
+	return lines
 }
 
 // lastDirs shows the end of a path ("acme/api"): where it was is what you recognize.

@@ -2,8 +2,12 @@ package core
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/krol22/stackk/internal/store"
 	"github.com/krol22/stackk/internal/tmux"
@@ -16,17 +20,25 @@ type Drawer struct {
 	A     *App
 	UI    string // the TUI's own pane id
 	Stack string // session id of the stack
-	mu    sync.Mutex
+	// Canvas, when set, runs under the dashboard. The drawer then closes by dropping its
+	// placeholder instead of zooming the dashboard, which would hide the canvas.
+	Canvas string
+	mu     sync.Mutex
+	quit   bool // after Quit nothing may create panes again
+	// the canvas last written to the window for other stackk processes
+	shared       bool
+	sharedCanvas string
 }
 
 // Width of the drawer as a share of the window.
 var drawerWidth = envStr("STACKK_DRAWER_WIDTH", "62%")
 
 type layout struct {
-	ui    tmux.Pane
-	side  *tmux.Pane  // drawer pane in the TUI's window: the slot or a pulled-out agent
-	slots []tmux.Pane // this stack's placeholders anywhere on the server
-	panes []tmux.Pane
+	ui       tmux.Pane
+	side     *tmux.Pane  // drawer pane in the TUI's window: the slot or a pulled-out agent
+	slots    []tmux.Pane // this stack's placeholders anywhere on the server
+	canvases []tmux.Pane // this stack's canvas panes, the one in the dashboard's window first
+	panes    []tmux.Pane
 }
 
 func (d *Drawer) read() (layout, error) {
@@ -47,6 +59,13 @@ func (d *Drawer) read() (layout, error) {
 	for i, p := range panes {
 		if p.Role == "slot" && p.SlotOf == d.Stack {
 			l.slots = append(l.slots, p)
+		}
+		if p.Role == "canvas" && p.SlotOf == d.Stack {
+			if p.WindowID == l.ui.WindowID {
+				l.canvases = append([]tmux.Pane{p}, l.canvases...)
+			} else {
+				l.canvases = append(l.canvases, p)
+			}
 		}
 		if p.WindowID == l.ui.WindowID && p.ID != d.UI && l.side == nil && (p.Role == "slot" || p.Task != "") {
 			l.side = &panes[i]
@@ -70,19 +89,47 @@ func (d *Drawer) Out() string {
 	return ""
 }
 
-func (d *Drawer) newSlot() error {
-	out, err := d.A.T.Run("split-window", "-hd", "-t", d.UI, "-l", drawerWidth, "-P", "-F", "#{pane_id}", d.A.Self, "slot")
+// sidePct is the RUNNING column's share of the window in canvas mode, where the closed drawer
+// is that column.
+const sidePct = 42
+
+// slotKind is the placeholder this mode wants: with a canvas it shows RUNNING beside the stack.
+func (d *Drawer) slotKind() string {
+	if d.Canvas != "" {
+		return "side"
+	}
+	return ""
+}
+
+func (d *Drawer) slotWidth(kind string) string {
+	if kind == "side" {
+		return strconv.Itoa(sidePct) + "%"
+	}
+	return drawerWidth
+}
+
+func (d *Drawer) newSlot(kind string) error {
+	args := []string{"split-window", "-fhd", "-t", d.UI, "-l", d.slotWidth(kind), "-P", "-F", "#{pane_id}", d.A.Self, "slot"}
+	if kind != "" {
+		args = append(args, kind, d.Stack) // tags are set after the process starts
+	}
+	out, err := d.A.T.Run(args...)
 	if err != nil {
 		return err
 	}
 	d.A.T.SetPaneOpt(out, "@stackk_slot", d.Stack)
+	if kind != "" {
+		d.A.T.SetPaneOpt(out, "@stackk_slotkind", kind)
+	}
 	return d.A.T.SetPaneOpt(out, "@stackk_role", "slot")
 }
 
 // Ensure tags the TUI and repairs the drawer after crashes or dead agents.
 func (d *Drawer) Ensure() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	defer d.lock()()
+	if d.quit {
+		return nil
+	}
 	t := d.A.T
 	l, err := d.read()
 	if err != nil {
@@ -108,20 +155,42 @@ func (d *Drawer) Ensure() error {
 			return err
 		}
 	}
+	for _, c := range l.canvases[min(1, len(l.canvases)):] {
+		t.Run("kill-pane", "-t", c.ID)
+	}
+	if !d.shared || d.sharedCanvas != d.Canvas {
+		d.shared, d.sharedCanvas = true, d.Canvas
+		if d.Canvas == "" {
+			t.Run("set-option", "-wu", "-t", d.UI, "@stackk_canvas")
+		} else {
+			t.Run("set-option", "-w", "-t", d.UI, "@stackk_canvas", d.Canvas) // for other stackk processes
+		}
+	}
+	kind := d.slotKind()
+	if l.side != nil && l.side.Role == "slot" && l.side.SlotKind != kind {
+		// The canvas was switched on or off: the placeholder here is the wrong kind.
+		t.Run("kill-pane", "-t", l.side.ID)
+		if l, err = d.read(); err != nil {
+			return err
+		}
+	}
 	if l.side == nil {
 		// First start, or the pulled-out agent died: bring a stray slot back or make a new one.
-		if len(l.slots) > 0 {
-			if _, err := t.Run("join-pane", "-hd", "-s", l.slots[0].ID, "-t", d.UI, "-l", drawerWidth); err != nil {
+		if len(l.slots) > 0 && l.slots[0].SlotKind == kind {
+			if _, err := t.Run("join-pane", "-fhd", "-s", l.slots[0].ID, "-t", d.UI, "-l", d.slotWidth(kind)); err != nil {
 				return err
 			}
 			l.slots = l.slots[1:]
-		} else if err := d.newSlot(); err != nil {
+		} else if err := d.newSlot(kind); err != nil {
 			return err
 		}
 		for _, s := range l.slots {
 			t.Run("kill-pane", "-t", s.ID)
 		}
-		return d.zoom(true)
+		return d.zoom(kind == "")
+	}
+	if kind == "side" && l.ui.Zoomed {
+		d.zoom(false)
 	}
 	if l.side.Role == "slot" {
 		for _, s := range l.slots {
@@ -131,6 +200,21 @@ func (d *Drawer) Ensure() error {
 		}
 	}
 	return nil
+}
+
+// lock serializes drawer changes, also across processes: with a canvas the RUNNING column
+// (another stackk process) opens tasks too.
+func (d *Drawer) lock() (unlock func()) {
+	d.mu.Lock()
+	f, err := os.OpenFile(filepath.Join(filepath.Dir(store.DefaultPath()), "drawer.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return d.mu.Unlock
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	return func() {
+		f.Close() // releases the lock
+		d.mu.Unlock()
+	}
 }
 
 func (d *Drawer) zoom(on bool) error {
@@ -148,8 +232,7 @@ func (d *Drawer) zoom(on bool) error {
 // closed state is one chained tmux command: the dashboard never flashes through a full-width
 // layout in between. focus moves the keyboard to the agent.
 func (d *Drawer) Open(pane string, focus bool) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	defer d.lock()()
 	l, err := d.read()
 	if err != nil {
 		return err
@@ -161,7 +244,7 @@ func (d *Drawer) Open(pane string, focus bool) error {
 		return d.zoom(false)
 	}
 	if l.side == nil {
-		if err := d.newSlot(); err != nil {
+		if err := d.newSlot(d.slotKind()); err != nil {
 			return err
 		}
 		if l, err = d.read(); err != nil {
@@ -179,11 +262,19 @@ func (d *Drawer) Open(pane string, focus bool) error {
 		}
 	}
 	width, _ := d.A.T.Run("show-options", "-wqv", "-t", d.UI, "@stackk_drawer_w")
+	if width == "" && d.Canvas != "" { // the placeholder is the narrower RUNNING column
+		if pct, err := strconv.Atoi(strings.TrimSuffix(drawerWidth, "%")); err == nil {
+			width = strconv.Itoa(l.ui.WinWidth * pct / 100)
+		}
+	}
 	var cmds [][]string
 	if l.ui.Zoomed {
 		cmds = append(cmds, []string{"resize-pane", "-Z", "-t", d.UI})
 	}
 	slot := l.side.ID
+	if l.side.SlotKind == "side" { // remember the RUNNING column's width for the way back
+		cmds = append(cmds, []string{"set-option", "-w", "-t", d.UI, "@stackk_side_w", l.side.Width})
+	}
 	if l.side.Role != "slot" {
 		// Another agent is out: send it home by swapping with the placeholder in its home window,
 		// which lands that placeholder in the drawer for the incoming agent.
@@ -205,8 +296,7 @@ func (d *Drawer) Open(pane string, focus bool) error {
 
 // Close returns the pulled-out agent to its home window and gives the TUI the full width.
 func (d *Drawer) Close() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	defer d.lock()()
 	l, err := d.read()
 	if err != nil {
 		return err
@@ -216,13 +306,19 @@ func (d *Drawer) Close() error {
 
 func (d *Drawer) close(l layout) error {
 	if l.side == nil || l.side.Role == "slot" {
-		return d.zoom(true)
+		return d.zoom(d.Canvas == "")
 	}
 	zoom := []string{"resize-pane", "-Z", "-t", d.UI}
 	save := []string{"set-option", "-w", "-t", d.UI, "@stackk_drawer_w", l.side.Width}
 	if home := d.homeSlot(*l.side, l); home != "" {
 		cmds := [][]string{save, {"swap-pane", "-d", "-s", l.side.ID, "-t", home}}
-		if !l.ui.Zoomed {
+		if d.Canvas != "" { // the placeholder, now here, is the RUNNING column again, as wide as before
+			side, _ := d.A.T.Run("show-options", "-wqv", "-t", d.UI, "@stackk_side_w")
+			if n, err := strconv.Atoi(side); err != nil || n < 20 {
+				side = strconv.Itoa(l.ui.WinWidth * sidePct / 100)
+			}
+			cmds = append(cmds, []string{"resize-pane", "-t", home, "-x", side})
+		} else if !l.ui.Zoomed {
 			cmds = append(cmds, zoom)
 		}
 		return d.A.T.Chain(cmds...)
@@ -232,8 +328,8 @@ func (d *Drawer) close(l layout) error {
 	if _, err := d.A.T.Run("break-pane", "-d", "-s", l.side.ID, "-t", d.Stack+":"); err != nil {
 		return err
 	}
-	d.newSlot()
-	return d.zoom(true)
+	d.newSlot(d.slotKind())
+	return d.zoom(d.Canvas == "")
 }
 
 // homeSlot is this stack's placeholder waiting in the agent's home window, if any.
@@ -260,14 +356,14 @@ func (d *Drawer) sendHome(agent tmux.Pane, l layout) error {
 // Quit puts everything back: agent home, placeholder gone, the window as the user left it.
 func (d *Drawer) Quit() error {
 	d.Close()
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	defer d.lock()()
+	d.quit = true
 	l, err := d.read()
 	if err != nil {
 		return err
 	}
 	d.zoom(false)
-	for _, s := range l.slots {
+	for _, s := range append(l.slots, l.canvases...) {
 		d.A.T.Run("kill-pane", "-t", s.ID)
 	}
 	d.A.T.Run("set-option", "-wu", "-t", d.UI, "@stackk_ui")
@@ -313,7 +409,7 @@ func (a *App) Recall(slotPane string) error {
 	if err != nil || !ok {
 		return err
 	}
-	d := &Drawer{A: a, UI: ui.ID, Stack: ui.OfStack}
+	d := a.DrawerOf(ui, ui.OfStack)
 	agent := d.Out()
 	if err := d.Close(); err != nil {
 		return err
@@ -374,6 +470,12 @@ func (a *App) Focus(taskID string) error {
 	if task.TmuxPane == "" {
 		return nil
 	}
-	d := &Drawer{A: a, UI: ui.ID, Stack: task.Stack}
+	d := a.DrawerOf(ui, task.Stack)
 	return d.Open(task.TmuxPane, true)
+}
+
+// DrawerOf is the drawer of a running dashboard, as that dashboard set it up.
+func (a *App) DrawerOf(ui tmux.Pane, stack string) *Drawer {
+	canvas, _ := a.T.Run("show-options", "-wqv", "-t", ui.ID, "@stackk_canvas")
+	return &Drawer{A: a, UI: ui.ID, Stack: stack, Canvas: canvas}
 }

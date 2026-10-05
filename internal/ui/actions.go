@@ -2,9 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/krol22/stackk/internal/config"
 	"github.com/krol22/stackk/internal/store"
 )
 
@@ -114,8 +116,57 @@ func (m *stackModel) submitEdit() tea.Cmd {
 	e := m.edit
 	m.edit = nil
 	app, val := m.app, e.input.Value()
+	if e.kind == "canvas" {
+		val = strings.TrimSpace(val)
+		if val == "" {
+			return nil
+		}
+		m.cfgCanvas, m.canvasForce = val, true
+		return tea.Batch(m.run(func() (string, error) {
+			cfg, err := config.Load()
+			if err == nil {
+				cfg.Canvas = val
+				err = config.Save(cfg)
+			}
+			return "", err
+		}), m.setCanvas(val))
+	}
 	if e.kind == "rename" {
 		return m.run(func() (string, error) { return "", app.Rename(e.task, val) })
 	}
 	return m.run(func() (string, error) { return "", app.SetNote(e.task, val) })
+}
+
+// toggleCanvas shows or hides the canvas for this run; with none configured it asks for one.
+func (m *stackModel) toggleCanvas() tea.Cmd {
+	switch {
+	case m.canvasShown():
+		m.canvasForce = false
+		return m.setCanvas("")
+	case m.canvas != "": // on, but aside for the stack: show it anyway
+		m.canvasForce, m.canvasWant = true, 0
+		return nil
+	case m.cfgCanvas != "":
+		m.canvasForce = true
+		return m.setCanvas(m.cfgCanvas)
+	}
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.CharLimit = 500
+	ti.Width = 60
+	ti.Placeholder = "bookokrat ~/books/current.epub"
+	ti.Focus()
+	m.edit = &editState{kind: "canvas", input: ti}
+	return nil
+}
+
+func (m *stackModel) setCanvas(command string) tea.Cmd {
+	m.canvas = command
+	want := 0
+	if command != "" && m.width > 0 {
+		want = m.dashLines()
+	}
+	m.canvasWant = want
+	d := m.drawer
+	return m.run(func() (string, error) { return "", d.SetCanvas(command, want) })
 }

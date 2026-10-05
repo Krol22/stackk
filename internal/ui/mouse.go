@@ -49,6 +49,12 @@ func (m *stackModel) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if !left && !right {
 		return m, nil
 	}
+	if m.away != "" {
+		if left {
+			return m, m.recall()
+		}
+		return m, nil
+	}
 	if m.blurred {
 		// A click on the dashboard while the drawer has focus. Clicking a task or a button acts as
 		// usual (opening another task switches the drawer in place); clicking the background closes.
@@ -102,6 +108,8 @@ func (m *stackModel) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case in("b:find", msg):
 		return m, m.openFind()
+	case in("b:canvas", msg):
+		return m, m.toggleCanvas()
 	case in("b:paused", msg):
 		m.paused = true
 		return m, nil
