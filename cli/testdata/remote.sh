@@ -28,6 +28,26 @@ sk key alpha y enter; sleep 3
 check "y + enter answered it" '[ "$(field alpha phase)" = idle ]'
 check "an unknown key is refused" '! sk key alpha F13 2>/dev/null && sk key alpha F13 2>&1 | grep -q "unknown key"'
 
+step "transcript: the conversation, not the screen"
+sk send alpha "hello transcript"; sleep 3
+check "your prompt, the reply and the tool it ran" 'sk transcript alpha | grep -q "you: hello transcript" && sk transcript alpha | grep -q "claude: reply: hello transcript" && sk transcript alpha | grep -q "» Read .*main.go ✓"'
+check "JSON, the last n" 'sk transcript -json -n 2 alpha | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d[\"messages\"])==2 and d[\"messages\"][-1][\"role\"]==\"assistant\""'
+
+step "what a waiting agent asks, for a client to answer"
+sk send alpha ask; sleep 2
+check "a permission: the tool and the full command" 'sk ls -json | python3 -c "import json,sys; w=[t for t in json.load(sys.stdin) if t[\"name\"]==\"alpha\"][0][\"waiting\"]; assert w==dict(tool=\"Bash\", input=\"rm -rf build\"), w"'
+sk key alpha y enter; sleep 3
+check "answered: nothing is asked any more" 'sk ls -json | python3 -c "import json,sys; assert \"waiting\" not in [t for t in json.load(sys.stdin) if t[\"name\"]==\"alpha\"][0]"'
+sk send alpha question; sleep 2
+check "a question: its options, in order" 'sk ls -json | python3 -c "import json,sys; q=[t for t in json.load(sys.stdin) if t[\"name\"]==\"alpha\"][0][\"waiting\"][\"questions\"][0]; assert q[\"question\"]==\"Which database?\" and [o[\"label\"] for o in q[\"options\"]]==[\"Postgres\",\"SQLite\"], q"'
+sk key alpha 1 enter; sleep 3
+check "option 1 picked with key 1" '[ "$(field alpha last_msg)" = "reply: picked 1" ]'
+
+step "upload: a file from the phone, for the agent to read"
+UP=$(printf 'PNGDATA' | sk upload alpha '../../a b?.png')
+check "saved under stackk's state, name made safe, private" '[ "$(cat "$UP")" = PNGDATA ] && case "$UP" in "$(dirname "$STACKK_DB")"/uploads/*-a_b_.png) true;; *) false;; esac && [ "$(stat -f %Lp "$UP")" = 600 ]'
+check "a file over the limit is refused, nothing left behind" '! head -c 26214401 /dev/zero | sk upload alpha big.bin 2>/dev/null && ! ls "$(dirname "$UP")" | grep -q big.bin'
+
 step "naming a task"
 check "an ambiguous name prefix is refused, listing the matches" 'sk show alp 2>&1 | grep -q "matches 2 tasks"'
 check "an unknown task is refused" 'sk show nope 2>&1 | grep -q "no task"'

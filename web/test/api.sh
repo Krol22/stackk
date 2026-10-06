@@ -31,6 +31,16 @@ post "/api/tasks/$ID/key" '{"keys":["y","enter"]}' >/dev/null; sleep 3
 check "y + enter from the key row answered it" '[ "$(field alpha phase)" = idle ]'
 check "a CLI error comes back as JSON" 'post "/api/tasks/$ID/key" "{\"keys\":[\"F13\"]}" | grep -q "unknown key"'
 
+step "the conversation"
+check "the transcript as JSON messages" 'get "/api/tasks/$ID/transcript?n=10" | python3 -c "import json,sys; m=json.load(sys.stdin)[\"messages\"]; assert any(x[\"role\"]==\"user\" and x[\"text\"]==\"hello from the phone\" for x in m)"'
+
+step "attachments"
+UP=$(curl -s -X POST -H "Content-Type: application/octet-stream" --data-binary "SCREENSHOT" "$U/api/tasks/$ID/upload?name=shot.png" | python3 -c "import json,sys; print(json.load(sys.stdin)[\"path\"])")
+check "an upload lands on the Mac and comes back as a path" '[ "$(cat "$UP")" = SCREENSHOT ]'
+post "/api/tasks/$ID/send" "{\"text\":\"look (attached: $UP)\"}" >/dev/null; sleep 3
+check "the reply carries the path to the agent" '[ "$(field alpha last_msg)" = "reply: look (attached: $UP)" ]'
+check "a cross-site upload is refused" '[ "$(code -X POST -H "Content-Type: application/octet-stream" -H "Origin: https://evil.example" --data-binary x "$U/api/tasks/$ID/upload?name=x")" = 403 ]'
+
 step "pause and resume"
 post "/api/tasks/$ID/pause" '{}' >/dev/null; sleep 1
 check "paused" '[ "$(field alpha view)" = paused ]'

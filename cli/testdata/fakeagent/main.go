@@ -31,11 +31,30 @@ var stopBusy chan struct{}
 func hook(ev map[string]any) {
 	ev["session_id"] = sessionID
 	ev["cwd"] = cwd
-	ev["transcript_path"] = "/tmp/fake-" + sessionID + ".jsonl"
+	ev["transcript_path"] = transcript()
 	b, _ := json.Marshal(ev)
 	cmd := exec.Command(os.Getenv("STACKK_BIN"), "mark", "claude")
 	cmd.Stdin = strings.NewReader(string(b))
 	cmd.Run()
+}
+
+func transcript() string { return "/tmp/fake-" + sessionID + ".jsonl" }
+
+// record appends to the transcript the way Claude Code writes it.
+func record(kind string, content any) {
+	f, err := os.OpenFile(transcript(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	b, _ := json.Marshal(map[string]any{"type": kind, "sessionId": sessionID, "cwd": cwd,
+		"timestamp": time.Now().UTC().Format(time.RFC3339Nano), "message": map[string]any{"content": content}})
+	f.Write(append(b, '\n'))
+}
+
+func recordTool(id, name string, input map[string]any, isError bool) {
+	record("assistant", []map[string]any{{"type": "tool_use", "id": id, "name": name, "input": input}})
+	record("user", []map[string]any{{"type": "tool_result", "tool_use_id": id, "is_error": isError, "content": "ok"}})
 }
 
 func main() {
@@ -75,6 +94,7 @@ func turn(line string, in *bufio.Scanner) {
 		hook(map[string]any{"hook_event_name": "SessionEnd", "reason": "prompt_input_exit"})
 		os.Exit(0)
 	}
+	record("user", line)
 	if rest, ok := strings.CutPrefix(line, "busy: "); ok { // long work with a real-looking prompt
 		hook(map[string]any{"hook_event_name": "UserPromptSubmit", "prompt": rest})
 		line = "busy"
@@ -135,12 +155,22 @@ func turn(line string, in *bufio.Scanner) {
 			}
 		}(stopBusy)
 		return
+	case "question":
+		q := map[string]any{"questions": []map[string]any{{"question": "Which database?", "header": "DB",
+			"options": []map[string]any{{"label": "Postgres", "description": "the one in prod"}, {"label": "SQLite"}}}}}
+		hook(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion", "tool_input": q, "tool_use_id": "tu3"})
+		fmt.Print("Which database? 1. Postgres 2. SQLite ")
+		if in != nil && in.Scan() {
+			hook(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "AskUserQuestion", "tool_input": q, "tool_use_id": "tu3"})
+			line = "picked " + strings.TrimSpace(in.Text())
+		}
 	case "ask":
 		tool := map[string]any{"command": "rm -rf build"}
 		hook(map[string]any{"hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": tool, "tool_use_id": "tu1"})
 		fmt.Print("allow Bash rm -rf build? [y/n] ")
 		if in != nil && in.Scan() {
 			hook(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": tool, "tool_use_id": "tu1"})
+			recordTool("tu1", "Bash", tool, false)
 		}
 	default:
 		for i := 0; i < 3; i++ {
@@ -149,8 +179,10 @@ func turn(line string, in *bufio.Scanner) {
 		}
 		fmt.Println()
 		hook(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Read", "tool_input": map[string]any{"file_path": cwd + "/main.go"}, "tool_use_id": "tu2"})
+		recordTool("tu2", "Read", map[string]any{"file_path": cwd + "/main.go"}, false)
 	}
 	msg := "reply: " + line
+	record("assistant", []map[string]any{{"type": "text", "text": msg + "\ndetails…"}})
 	fmt.Println(msg)
 	hook(map[string]any{"hook_event_name": "Stop", "last_assistant_message": msg + "\ndetails…"})
 }

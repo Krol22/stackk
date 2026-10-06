@@ -31,6 +31,8 @@ const usage = `stackk — a round-robin stack of AI sessions in tmux
   stackk show [-lines n] [-json] <task>  what is on the task's terminal
   stackk send [-no-enter] <task> <text>  type a reply into it (and press Enter)
   stackk key <task> <key…>            press keys in it: y, n, 1, enter, esc, up, down, tab, ctrl-c…
+  stackk transcript [-n count] [-json] <task>  the conversation: your prompts, replies, tools
+  stackk upload <task> <name> < file  save a file for the task to read; prints its path
   stackk log [task]                   events
   stackk paused                       paused sessions (hidden from the dashboard)
   stackk resume <task>                bring back a paused session / restart a finished one
@@ -98,6 +100,10 @@ func main() {
 		err = sendCmd(app, args)
 	case "key":
 		err = keyCmd(app, args)
+	case "transcript":
+		err = transcriptCmd(app, args)
+	case "upload":
+		err = uploadCmd(app, args)
 	case "log":
 		err = logCmd(app, args)
 	case "resume":

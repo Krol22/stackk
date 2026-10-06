@@ -10,8 +10,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -36,6 +38,7 @@ var (
 
 func main() {
 	flag.Parse()
+	mime.AddExtensionType(".webmanifest", "application/manifest+json")
 	bin, err := findStackk(*stackk)
 	if err != nil {
 		log.Fatal(err)
@@ -69,8 +72,10 @@ func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/tasks", s.tasks)
 	mux.HandleFunc("GET /api/tasks/{id}/screen", s.screen)
+	mux.HandleFunc("GET /api/tasks/{id}/transcript", s.transcript)
 	mux.HandleFunc("POST /api/tasks/{id}/send", s.send)
 	mux.HandleFunc("POST /api/tasks/{id}/key", s.key)
+	mux.HandleFunc("POST /api/tasks/{id}/upload", s.upload)
 	mux.HandleFunc("POST /api/tasks/{id}/{action}", s.action)
 	app, _ := fs.Sub(static, "static/app")
 	mux.Handle("GET /", spa(http.FS(app)))
@@ -92,7 +97,10 @@ func (s *server) guard(next http.Handler) http.Handler {
 					return
 				}
 			}
-			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			// JSON, or raw bytes for an upload: neither can come from a plain cross-site form
+			// (both make the browser ask first, and this server never says yes).
+			ct := r.Header.Get("Content-Type")
+			if !strings.HasPrefix(ct, "application/json") && ct != "application/octet-stream" {
 				http.Error(w, "JSON only", http.StatusUnsupportedMediaType)
 				return
 			}
@@ -182,6 +190,19 @@ func (s *server) screen(w http.ResponseWriter, r *http.Request) {
 	s.reply(w, out, err)
 }
 
+func (s *server) transcript(w http.ResponseWriter, r *http.Request) {
+	id, ok := taskID(w, r)
+	if !ok {
+		return
+	}
+	n := 60
+	if v, err := strconv.Atoi(r.URL.Query().Get("n")); err == nil && v > 0 && v <= 1000 {
+		n = v
+	}
+	out, err := s.run(r.Context(), "", "transcript", "-json", "-n", strconv.Itoa(n), id)
+	s.reply(w, out, err)
+}
+
 func (s *server) send(w http.ResponseWriter, r *http.Request) {
 	id, ok := taskID(w, r)
 	if !ok {
@@ -222,6 +243,27 @@ func (s *server) key(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, err := s.run(r.Context(), "", append([]string{"key", id}, body.Keys...)...)
+	s.reply(w, out, err)
+}
+
+// upload hands a file from the phone to `stackk upload`, which saves it where the agent can
+// read it and answers with its path.
+func (s *server) upload(w http.ResponseWriter, r *http.Request) {
+	id, ok := taskID(w, r)
+	if !ok {
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" || strings.HasPrefix(name, "-") || len(name) > 200 {
+		http.Error(w, "bad file name", http.StatusBadRequest)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 25<<20))
+	if err != nil {
+		http.Error(w, "file too large (25 MB at most)", http.StatusRequestEntityTooLarge)
+		return
+	}
+	out, err := s.run(r.Context(), string(body), "upload", "-json", id, name)
 	s.reply(w, out, err)
 }
 

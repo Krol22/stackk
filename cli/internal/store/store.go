@@ -68,6 +68,7 @@ type Task struct {
 	ID, Name, Cwd, Agent, AgentSessionID, SessionPath, Stack string
 	Deferred                                                 bool
 	Phase, WaitingKind, WaitingToolUseID                     string
+	WaitingDetail                                            string // JSON: what the agent asks (tool and command, or questions and options)
 	PhaseSince, QueuedAt                                     int64
 	LastMsg, LastTool                                        string
 	LastToolAt, LastEventAt                                  int64
@@ -128,12 +129,13 @@ func Open(path string) (*DB, error) {
 
 // schemaVersion is bumped with every schema change. Open runs the schema only when the stored
 // version is older, so the common path (a hook opening the DB) costs one PRAGMA read.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // Columns added after the first release, for databases created before them.
 var addedColumns = []string{
 	`ALTER TABLE tasks ADD COLUMN paused_at INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE tasks ADD COLUMN hidden_at INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE tasks ADD COLUMN waiting_detail TEXT NOT NULL DEFAULT ''`,
 }
 
 func migrate(db *sql.DB) error {
@@ -161,13 +163,13 @@ func migrate(db *sql.DB) error {
 var taskFields = []string{"name", "cwd", "agent", "agent_session_id", "session_path", "stack", "deferred",
 	"phase", "waiting_kind", "waiting_tool_use_id", "phase_since", "queued_at", "last_msg", "last_tool", "last_tool_at",
 	"last_event_at", "run_id", "run_state", "run_started_at", "tmux_pane", "home_window", "error", "note", "archived_at",
-	"paused_at", "hidden_at"}
+	"paused_at", "hidden_at", "waiting_detail"}
 
 func taskArgs(t Task) []any {
 	return []any{t.Name, t.Cwd, t.Agent, t.AgentSessionID, t.SessionPath, t.Stack, b2i(t.Deferred),
 		t.Phase, t.WaitingKind, t.WaitingToolUseID, t.PhaseSince, t.QueuedAt, t.LastMsg, t.LastTool, t.LastToolAt,
 		t.LastEventAt, t.RunID, t.RunState, t.RunStartedAt, t.TmuxPane, t.HomeWindow, t.Error, t.Note, t.ArchivedAt,
-		t.PausedAt, t.HiddenAt}
+		t.PausedAt, t.HiddenAt, t.WaitingDetail}
 }
 
 func placeholder(col string) string {
@@ -204,7 +206,7 @@ func scanTask(s scanner) (Task, error) {
 	err := s.Scan(&t.ID, &t.CreatedAt, &t.Name, &t.Cwd, &t.Agent, &t.AgentSessionID, &t.SessionPath, &t.Stack, &deferred,
 		&t.Phase, &t.WaitingKind, &t.WaitingToolUseID, &t.PhaseSince, &t.QueuedAt, &t.LastMsg, &t.LastTool, &t.LastToolAt,
 		&t.LastEventAt, &t.RunID, &t.RunState, &t.RunStartedAt, &t.TmuxPane, &t.HomeWindow, &t.Error, &t.Note, &t.ArchivedAt,
-		&t.PausedAt, &t.HiddenAt)
+		&t.PausedAt, &t.HiddenAt, &t.WaitingDetail)
 	t.Deferred = deferred != 0
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNotFound

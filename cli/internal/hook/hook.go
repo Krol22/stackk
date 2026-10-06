@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/krol22/stackk/cli/internal/safe"
+	"github.com/krol22/stackk/cli/internal/sessions"
 	"github.com/krol22/stackk/cli/internal/store"
 )
 
@@ -53,6 +54,14 @@ func Parse(agent string, raw []byte) (store.Event, Payload, bool) {
 			return store.Event{}, p, false
 		}
 	}
+	// omp runs subagents in its own process and reports them like its main session, with the
+	// subagent's session and transcript: tell them apart by the file, and keep the main ones.
+	if agent == "omp" && p.AgentID == "" {
+		if _, sub := sessions.OmpMain(p.TranscriptPath); sub {
+			p.AgentID = strings.TrimSuffix(filepath.Base(p.TranscriptPath), ".jsonl")
+			p.SessionID, p.TranscriptPath = "", ""
+		}
+	}
 	// Inside a subagent only what needs the user (permission, question) or shows activity counts;
 	// its own lifecycle events are not the session's.
 	if p.AgentID != "" {
@@ -83,12 +92,14 @@ func Parse(agent string, raw []byte) (store.Event, Payload, bool) {
 	case "PermissionRequest":
 		ev.Kind, ev.WaitingKind = "wait", "permission"
 		ev.Msg = "permission: " + ToolSummary(p.ToolName, p.ToolInput)
+		ev.Detail = permissionDetail(p.ToolName, p.ToolInput)
 	case "PreToolUse":
 		if p.ToolName != "AskUserQuestion" {
 			return ev, p, false
 		}
 		ev.Kind, ev.WaitingKind = "wait", "question"
 		ev.Msg = "question: " + question(p.ToolInput)
+		ev.Detail = questionDetail(p.ToolInput)
 	case "PostToolUse", "PostToolUseFailure":
 		ev.Kind, ev.Tool = "tool_done", ToolSummary(p.ToolName, p.ToolInput)
 	case "SessionEnd":
@@ -113,6 +124,55 @@ func ToolSummary(name string, input json.RawMessage) string {
 		}
 	}
 	return OneLine(strings.TrimSpace(name + " " + arg))
+}
+
+// permissionDetail is what a permission prompt asks, for a client that answers it: the tool and
+// its full main argument (the command, the file).
+func permissionDetail(name string, input json.RawMessage) string {
+	var in map[string]any
+	json.Unmarshal(input, &in)
+	arg := ""
+	for _, k := range []string{"command", "file_path", "path", "url", "pattern", "query", "description"} {
+		if v, ok := in[k].(string); ok && v != "" {
+			arg = v
+			break
+		}
+	}
+	b, _ := json.Marshal(map[string]string{"tool": safe.Text(name), "input": clipRunes(safe.Block(arg), 2000)})
+	return string(b)
+}
+
+// questionDetail is an AskUserQuestion's questions and their options, in order: option n is
+// the key n in the agent's prompt.
+func questionDetail(input json.RawMessage) string {
+	var in struct {
+		Questions []struct {
+			Question string `json:"question"`
+			Header   string `json:"header"`
+			Options  []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
+	}
+	json.Unmarshal(input, &in)
+	for i := range in.Questions {
+		q := &in.Questions[i]
+		q.Question, q.Header = clipRunes(safe.Text(q.Question), 500), clipRunes(safe.Text(q.Header), 60)
+		for j := range q.Options {
+			o := &q.Options[j]
+			o.Label, o.Description = clipRunes(safe.Text(o.Label), 120), clipRunes(safe.Text(o.Description), 300)
+		}
+	}
+	b, _ := json.Marshal(in)
+	return string(b)
+}
+
+func clipRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
 }
 
 func question(input json.RawMessage) string {

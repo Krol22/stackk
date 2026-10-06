@@ -1,38 +1,60 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte'
-  import { api, mark, poll, type Task } from './api'
+  import { onDestroy, onMount, tick } from 'svelte'
+  import { api, poll, type Message, type Task } from './api'
+  import { md } from './markdown'
 
   let { id, task }: { id: string; task?: Task } = $props()
 
-  let lines = $state<string[]>([])
+  let messages = $state<Message[]>([])
   let error = $state('')
   let text = $state('')
   let busy = $state(false)
-  let typing = $state(false)
-  let wrap = $state(localStorage.getItem('stackk.wrap') !== '0')
-  let screenEl: HTMLElement | undefined = $state()
+  let menu = $state(false)
+  let files = $state<{ name: string; path: string }[]>([])
+  let uploading = $state(0)
+  let picker: HTMLInputElement | undefined = $state()
+  let expanded = $state<Record<number, boolean>>({})
+  let scroller: HTMLElement | undefined = $state()
+  let root: HTMLElement | undefined = $state()
+
+  // With the keyboard open, iOS shrinks only the visible part of the page: keep the reply box
+  // on top of the keyboard. Otherwise the view is pinned to the window's edges (CSS).
+  onMount(() => {
+    const vv = window.visualViewport
+    if (!vv || !root) return
+    const fit = () => {
+      const keyboard = vv.height < window.innerHeight - 120
+      root!.style.height = keyboard ? `${vv.height}px` : ''
+      root!.style.transform = keyboard ? `translateY(${vv.offsetTop}px)` : ''
+    }
+    fit()
+    vv.addEventListener('resize', fit)
+    vv.addEventListener('scroll', fit)
+    return () => {
+      vv.removeEventListener('resize', fit)
+      vv.removeEventListener('scroll', fit)
+    }
+  })
   let stuck = true // follow the bottom until you scroll up
 
   async function refresh() {
     try {
-      const s = await api.screen(id)
-      lines = s.lines
+      messages = (await api.transcript(id)).messages
       error = ''
       if (stuck) {
         await tick()
-        screenEl?.scrollTo({ top: screenEl.scrollHeight })
+        scroller?.scrollTo({ top: scroller.scrollHeight })
       }
     } catch (e) {
       error = (e as Error).message
     }
   }
 
-  const stop = poll(refresh, 1000)
-  onDestroy(stop)
+  onDestroy(poll(refresh, 1500))
 
   function onScroll() {
-    if (!screenEl) return
-    stuck = screenEl.scrollHeight - screenEl.scrollTop - screenEl.clientHeight < 40
+    if (!scroller) return
+    stuck = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40
   }
 
   async function act(fn: () => Promise<unknown>) {
@@ -41,7 +63,7 @@
       await fn()
       error = ''
       stuck = true
-      setTimeout(refresh, 250)
+      setTimeout(refresh, 300)
     } catch (e) {
       error = (e as Error).message
     } finally {
@@ -49,12 +71,34 @@
     }
   }
 
+  const press = (k: string) => act(() => api.keys(id, [k]))
+
+  // Files go to the Mac first (stackk upload); the reply carries their paths, which the agent
+  // reads like any file (screenshots included).
+  async function attach(list: FileList | null) {
+    for (const f of Array.from(list ?? [])) {
+      uploading++
+      try {
+        const { path } = await api.upload(id, f)
+        files = [...files, { name: f.name, path }]
+      } catch (e) {
+        error = `${f.name}: ${(e as Error).message}`
+      } finally {
+        uploading--
+      }
+    }
+    if (picker) picker.value = ''
+  }
+
   function send() {
     const t = text.trim()
-    if (!t) return
+    if (!t && !files.length) return
+    const paths = files.map((f) => f.path).join(' ')
+    const msg = files.length ? `${t || 'See the attached files.'} (attached: ${paths})` : t
     act(async () => {
-      await api.send(id, t)
+      await api.send(id, msg)
       text = ''
+      files = []
     })
   }
 
@@ -65,134 +109,233 @@
     }
   }
 
-  function toggleWrap() {
-    wrap = !wrap
-    localStorage.setItem('stackk.wrap', wrap ? '1' : '0')
-  }
+  // Runs of tool calls fold into one line: the conversation stays readable on a phone.
+  type Item = { kind: 'msg'; m: Message } | { kind: 'tools'; at: number; tools: Message[] }
+  let items = $derived.by(() => {
+    const out: Item[] = []
+    messages.forEach((m, i) => {
+      const last = out[out.length - 1]
+      if (m.role === 'tool' && last?.kind === 'tools') last.tools.push(m)
+      else if (m.role === 'tool') out.push({ kind: 'tools', at: i, tools: [m] })
+      else out.push({ kind: 'msg', m })
+    })
+    return out
+  })
+  const toolMark = (m: Message) => (m.error ? '✗' : m.done ? '✓' : '…')
 
-  const keys: [string, string][] = [
-    ['1', '1'], ['2', '2'], ['3', '3'], ['y', 'y'], ['n', 'n'], ['esc', 'esc'], ['enter', 'CR'],
-    ['up', '↑'], ['down', '↓'], ['tab', 'tab'], ['shift-tab', 's-tab'], ['ctrl-c', '^C'],
-  ]
+
   let waiting = $derived(task?.phase === 'waiting')
+  let ask = $derived(waiting ? task?.waiting : undefined)
+  let question = $derived(ask?.questions?.[0])
+  let paused = $derived(task?.view === 'paused' || task?.run_state === 'exited')
 </script>
 
-<div class="session">
-  <header class="tabline">
-    <a class="back" href="#/">:q</a>
-    <span class="tab">{task?.name ?? id}</span>
-    <span class="fill"></span>
-    <button onclick={toggleWrap}>[{wrap ? 'wrap' : 'nowrap'}]</button>
-    {#if task?.view === 'paused' || task?.run_state === 'exited'}
-      <button disabled={busy} onclick={() => act(() => api.action(id, 'resume'))}>[resume]</button>
-    {:else if task}
-      <button disabled={busy} onclick={() => act(() => api.action(id, 'pause'))}>[pause]</button>
-    {/if}
+<div class="session" bind:this={root}>
+  <header>
+    <a class="back" href="#/" aria-label="back">‹</a>
+    <span class="name">{task?.name ?? id}</span>
+    <button class="more" aria-label="more" onclick={() => (menu = !menu)}>⋯</button>
   </header>
 
-  <pre class="term" class:wrap bind:this={screenEl} onscroll={onScroll}>{lines.join('\n')}</pre>
+  {#if menu}
+    <div class="menu">
+      {#if paused}
+        <button disabled={busy} onclick={() => { menu = false; act(() => api.action(id, 'resume')) }}>resume</button>
+      {:else}
+        <button disabled={busy} onclick={() => { menu = false; act(() => api.action(id, 'pause')) }}>pause</button>
+      {/if}
+    </div>
+  {/if}
 
-  <div class="keys" class:waiting>
-    {#each keys as [k, label] (k)}
-      <button disabled={busy} onclick={() => act(() => api.keys(id, [k]))}>[{label}]</button>
-    {/each}
-  </div>
+  <div class="scroll chat" bind:this={scroller} onscroll={onScroll}>
+      {#each items as it, n (n)}
+        {#if it.kind === 'tools'}
+          {#if expanded[it.at] || it.tools.length === 1}
+            {#each it.tools as m, j (j)}
+              <button class="tool" class:err={m.error} onclick={() => (expanded[it.at] = false)}>{toolMark(m)} {m.tool}</button>
+            {/each}
+          {:else}
+            <button class="tool" onclick={() => (expanded[it.at] = true)}>
+              {toolMark(it.tools[it.tools.length - 1])} {it.tools.length} tools · {it.tools[it.tools.length - 1].tool}
+            </button>
+          {/if}
+        {:else if it.m.role === 'user'}
+          <div class="you">{it.m.text}</div>
+        {:else}
+          <div class="agent">{@html md(it.m.text ?? '')}</div>
+        {/if}
+      {:else}
+        <p class="dim">no messages yet</p>
+      {/each}
+      {#if task?.phase === 'working'}<p class="working">working…</p>{/if}
+    </div>
 
-  <footer class="statusline">
-    <span class="mode" class:insert={typing} class:wait={!typing && waiting}>{typing ? 'INSERT' : waiting ? 'WAIT' : 'NORMAL'}</span>
-    <span class="seg">{task?.agent || 'sh'}</span>
-    <span class="fill">{#if task}{mark(task)} {task.view} · {task.phase}{task.waiting_kind ? ` (${task.waiting_kind})` : ''}{/if}</span>
-    <span>{lines.length}L</span>
-  </footer>
+  <div class="dock">
+    {#if error}<button class="error" onclick={() => (error = '')}>{error}</button>{/if}
 
-  <form class="cmdline" onsubmit={(e) => { e.preventDefault(); send() }}>
-    {#if error}
-      <span class="err">E: {error}</span>
-    {:else}
-      <span class="colon">:</span>
+    {#if waiting}
+      <!-- what the agent waits for, where your thumb is -->
+      <div class="ask">
+        {#if question}
+          <p class="q">{question.question}</p>
+          {#each question.options ?? [] as o, i (i)}
+            <button class="choice" disabled={busy} onclick={() => press(String(i + 1))}>
+              <b>{o.label}</b>{#if o.description}<span class="d">{o.description}</span>{/if}
+            </button>
+          {/each}
+          <button class="choice ghost" disabled={busy} onclick={() => press('esc')}>cancel</button>
+        {:else if ask?.tool}
+          <p class="q">{ask.tool}</p>
+          {#if ask.input}<pre class="cmd">{ask.input}</pre>{/if}
+          <div class="row">
+            <button class="choice yes" disabled={busy} onclick={() => press('1')}>yes</button>
+            <button class="choice" disabled={busy} onclick={() => press('2')}>always</button>
+            <button class="choice no" disabled={busy} onclick={() => press('esc')}>no</button>
+          </div>
+        {:else}
+          <p class="q">{task?.last_msg || 'waiting for you'}</p>
+        {/if}
+      </div>
+    {/if}
+
+    {#if files.length || uploading}
+      <div class="files">
+        {#each files as f, i (f.path)}
+          <span class="file">{f.name}<button aria-label="remove" onclick={() => (files = files.filter((_, j) => j !== i))}>×</button></span>
+        {/each}
+        {#if uploading}<span class="file dim">uploading…</span>{/if}
+      </div>
+    {/if}
+
+    <form class="reply" onsubmit={(e) => { e.preventDefault(); send() }}>
+      <input bind:this={picker} type="file" multiple hidden onchange={(e) => attach(e.currentTarget.files)} />
+      <button type="button" class="clip" aria-label="attach" disabled={busy} onclick={() => picker?.click()}>+</button>
       <textarea
         rows="1"
-        placeholder="reply"
+        placeholder="reply…"
         enterkeyhint="send"
         autocapitalize="off"
         spellcheck="false"
         bind:value={text}
         onkeydown={onKeydown}
-        onfocus={() => (typing = true)}
-        onblur={() => (typing = false)}
+        onblur={() => window.scrollTo(0, 0)}
       ></textarea>
-      <button class="send" type="submit" disabled={busy || !text.trim()}>&lt;CR&gt;</button>
-    {/if}
-  </form>
+      <button class="send" type="submit" disabled={busy || uploading > 0 || (!text.trim() && !files.length)} aria-label="send">↑</button>
+    </form>
+  </div>
 </div>
 
 <style>
-  .session {
-    display: flex;
-    flex-direction: column;
-    height: 100dvh;
-    padding-top: env(safe-area-inset-top);
-  }
-  .tabline {
+  /* pinned to the screen's edges: in a home-screen app iOS reports 100dvh short of the screen */
+  .session { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  header {
     display: flex;
     align-items: center;
-    gap: 1ch;
-    background: var(--bg2);
-    font-size: 13px;
+    gap: 8px;
+    padding: env(safe-area-inset-top) 4px 0 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .back {
+    display: grid;
+    place-items: center;
+    width: var(--tap);
+    height: var(--tap);
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 26px;
+  }
+  .name { flex: 1; min-width: 0; color: var(--bright); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .more { width: var(--tap); height: var(--tap); color: var(--muted); font-size: 20px; }
+  .menu { display: flex; flex-direction: column; border-bottom: 1px solid var(--line); background: var(--raised); }
+  .menu button { min-height: var(--tap); padding: 0 16px; text-align: left; }
+
+  .scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; margin: 0; }
+  .chat { padding: 8px 16px 16px; }
+  .you { color: var(--accent); white-space: pre-wrap; word-break: break-word; margin: 18px 0 6px; padding-left: 10px; border-left: 2px solid var(--accent); }
+  .agent { word-break: break-word; margin: 8px 0; }
+  .agent :global(p) { margin: 0 0 8px; }
+  .agent :global(ul), .agent :global(ol) { margin: 0 0 8px; padding-left: 2.2ch; }
+  .agent :global(li) { margin: 2px 0; }
+  .agent :global(strong) { color: var(--bright); }
+  .agent :global(em) { color: var(--bright); }
+  .agent :global(code) { color: var(--aqua); background: var(--raised); border-radius: 4px; padding: 0 3px; }
+  .agent :global(pre) { background: var(--raised); border-radius: 8px; padding: 8px 10px; overflow-x: auto; margin: 0 0 8px; }
+  .agent :global(pre code) { background: none; padding: 0; }
+  .agent :global(h1), .agent :global(h2), .agent :global(h3), .agent :global(h4) { font-size: inherit; color: var(--bright); margin: 12px 0 6px; }
+  .agent :global(a) { color: var(--blue); }
+  .agent :global(blockquote) { margin: 0 0 8px; padding-left: 10px; border-left: 2px solid var(--line); color: var(--muted); }
+  .agent :global(table) { border-collapse: collapse; display: block; overflow-x: auto; margin: 0 0 8px; }
+  .agent :global(th), .agent :global(td) { border: 1px solid var(--line); padding: 2px 6px; text-align: left; }
+  .agent :global(hr) { border: 0; border-top: 1px solid var(--line); }
+  .tool {
+    display: block;
+    width: 100%;
+    text-align: left;
+    color: var(--dim);
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 4px 0;
   }
-  .tabline .back { color: var(--bg); background: var(--accent); text-decoration: none; font-weight: 700; padding: 6px 10px; }
-  .tab { color: var(--bright); font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
-  .fill { flex: 1; }
-  .tabline button { color: var(--muted); padding: 6px 4px; }
-  .tabline button:last-child { padding-right: 10px; }
-  .term {
-    flex: 1;
-    margin: 0;
-    padding: 8px 10px;
-    overflow: auto;
-    font: 11.5px/1.35 var(--mono);
-    color: var(--text);
-    background: var(--bg);
-    white-space: pre;
-    -webkit-overflow-scrolling: touch;
+  .tool.err { color: var(--red); }
+  .dim { color: var(--dim); }
+  .working { color: var(--blue); }
+
+  .dock { border-top: 1px solid var(--line); padding: 8px 12px max(env(safe-area-inset-bottom), 8px); background: var(--bg); }
+  .error { display: block; width: 100%; text-align: left; color: var(--red); padding: 4px 0 8px; }
+  .ask { padding-bottom: 8px; }
+  .q { margin: 2px 0 8px; color: var(--bright); }
+  .cmd { margin: 0 0 8px; padding: 8px 10px; background: var(--raised); color: var(--aqua); white-space: pre-wrap; word-break: break-word; max-height: 25dvh; overflow: auto; border-radius: 8px; font: inherit; }
+  .row { display: flex; gap: 8px; }
+  .row .choice { flex: 1; text-align: center; }
+  .choice {
+    display: block;
+    width: 100%;
+    min-height: 48px;
+    margin-bottom: 8px;
+    padding: 10px 14px;
+    text-align: left;
+    border-radius: 10px;
+    background: var(--raised);
+    border: 1px solid var(--line);
   }
-  .term.wrap { white-space: pre-wrap; word-break: break-word; }
-  .keys {
-    display: flex;
-    gap: 2px;
-    overflow-x: auto;
-    padding: 4px 6px;
-    scrollbar-width: none;
-    border-top: 1px solid var(--line);
-  }
-  .keys button { flex: none; padding: 6px 5px; color: var(--muted); font-size: 14px; }
-  .keys button:active { background: var(--cursor); color: var(--bright); }
-  .keys.waiting button:nth-child(-n + 6) { color: var(--accent); font-weight: 700; }
-  .cmdline {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5ch;
-    padding: 4px 8px calc(env(safe-area-inset-bottom) + 6px);
-    background: var(--bg);
-  }
-  .colon { color: var(--bright); padding-top: 6px; }
-  .err { color: var(--red); padding: 6px 0; font-size: 13px; }
+  .choice:active { background: var(--press); }
+  .choice b { color: var(--bright); }
+  .choice .d { display: block; color: var(--muted); font-size: inherit; }
+  .choice.yes { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
+  .choice.no { color: var(--red); }
+  .choice.ghost { background: none; color: var(--muted); }
+  .reply { display: flex; align-items: flex-end; gap: 8px; }
+  .clip { width: var(--tap); height: var(--tap); border-radius: 12px; background: var(--raised); border: 1px solid var(--line); color: var(--muted); font-size: 22px; }
+  .files { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; }
+  .file { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 4px 4px 4px 10px; border-radius: 8px; background: var(--raised); border: 1px solid var(--line); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file button { width: 28px; height: 28px; color: var(--muted); }
+  .file.dim { color: var(--dim); padding-right: 10px; }
   textarea {
     flex: 1;
+    min-height: var(--tap);
+    max-height: 30dvh;
     resize: none;
-    max-height: 120px;
-    font: 16px/1.4 var(--mono); /* 16px: iOS doesn't zoom in */
+    font-size: 16px; /* iOS doesn't zoom in at 16px */
+    line-height: 1.4;
     color: var(--bright);
-    background: transparent;
-    border: 0;
-    padding: 4px 0;
-    caret-color: var(--accent);
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 12px;
     field-sizing: content;
   }
-  textarea:focus { outline: none; }
+  textarea:focus { outline: none; border-color: var(--dim); }
   textarea::placeholder { color: var(--dim); }
-  .send { color: var(--accent); padding: 6px 2px; font-size: 13px; }
-  .send:disabled { color: var(--dim); }
-  button:disabled { opacity: 0.5; }
+  .send {
+    width: var(--tap);
+    height: var(--tap);
+    border-radius: 12px;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .send:disabled { background: var(--raised); color: var(--dim); }
+  button:disabled { opacity: 0.6; }
 </style>

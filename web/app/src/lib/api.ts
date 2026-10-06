@@ -19,9 +19,17 @@ export type Task = {
   queued_at: number
   created_at: number
   run_state: 'starting' | 'live' | 'exited'
+  waiting?: Waiting
 }
 
-export type Screen = { task: Task; lines: string[] }
+// What a waiting agent asks: a permission (tool and command) or questions with options.
+export type Waiting = {
+  tool?: string
+  input?: string
+  questions?: { question: string; header?: string; options?: { label: string; description?: string }[] }[]
+}
+
+export type Message = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; error?: boolean; done?: boolean; time?: number }
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, body === undefined ? {} : {
@@ -36,8 +44,18 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 
 export const api = {
   tasks: () => call<Task[]>('/api/tasks'),
-  screen: (id: string, lines = 300) => call<Screen>(`/api/tasks/${encodeURIComponent(id)}/screen?lines=${lines}`),
+  transcript: (id: string, n = 60) => call<{ task: Task; messages: Message[] }>(`/api/tasks/${encodeURIComponent(id)}/transcript?n=${n}`),
   send: (id: string, text: string, enter = true) => call(`/api/tasks/${encodeURIComponent(id)}/send`, { text, enter }),
+  upload: async (id: string, file: File): Promise<{ path: string; size: number }> => {
+    const res = await fetch(`/api/tasks/${encodeURIComponent(id)}/upload?name=${encodeURIComponent(file.name || 'file')}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    })
+    const data = await res.json().catch(() => ({ error: res.statusText }))
+    if (!res.ok) throw new Error(data.error || res.statusText)
+    return data
+  },
   keys: (id: string, keys: string[]) => call(`/api/tasks/${encodeURIComponent(id)}/key`, { keys }),
   action: (id: string, action: 'pause' | 'resume') => call(`/api/tasks/${encodeURIComponent(id)}/${action}`, {}),
 }
