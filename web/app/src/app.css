@@ -43,6 +43,11 @@
   --text: #d8dee9; --bright: #eceff4; --muted: #a3acbb; --dim: #6c7891;
   --accent: #ebcb8b; --purple: #b48ead; --green: #a3be8c; --aqua: #88c0d0; --blue: #81a1c1; --red: #bf616a;
 }
+:root[data-theme='evergreen'] {
+  --bg: #0f1a14; --raised: #16241c; --press: #1e3126; --line: #22372a;
+  --text: #d9e8dc; --bright: #f1fbf3; --muted: #8fb39a; --dim: #5a7a64;
+  --accent: #f2c46d; --purple: #c6a0e8; --green: #8fdc8f; --aqua: #7fd1c7; --blue: #8ab4f8; --red: #ff7a7a;
+}
 :root[data-theme='tokyo'] {
   --bg: #1a1b26; --raised: #24283b; --press: #2f3549; --line: #2f3549;
   --text: #c0caf5; --bright: #e8edff; --muted: #9aa5ce; --dim: #565f89;

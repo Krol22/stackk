@@ -40,6 +40,7 @@ const usage = `stackk — a round-robin stack of AI sessions in tmux
   stackk pause <task>                 hide a session (it keeps running)
   stackk hide|unhide <task>           take a window that is not a task out of the lists
   stackk rm <task>                    close the task's window and remove it for good
+  stackk rename <task> <name>         rename a task and its window
   stackk mark <claude|omp>            from agent hooks (payload on stdin)
 
 A task is its id, a unique id prefix or its name.
@@ -107,6 +108,8 @@ func main() {
 		err = uploadCmd(app, args)
 	case "dirs":
 		err = dirsCmd(app, args)
+	case "rename":
+		err = renameCmd(app, args)
 	case "log":
 		err = logCmd(app, args)
 	case "resume":

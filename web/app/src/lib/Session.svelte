@@ -12,6 +12,17 @@
   let busy = $state(false)
   let menu = $state(false)
   let confirmClose = $state(false)
+  let renaming = $state<string | null>(null) // the new name while the rename field is open
+
+  function rename() {
+    const name = renaming?.trim()
+    if (!name) return
+    act(async () => {
+      await api.rename(id, name)
+      renaming = null
+      menu = false
+    })
+  }
   let files = $state<{ name: string; path: string }[]>([])
   let uploading = $state(0)
   let picker: HTMLInputElement | undefined = $state()
@@ -166,7 +177,7 @@
   <header>
     <a class="back" href="#/" aria-label="back">‹</a>
     <span class="name">{task?.name ?? id}</span>
-    <button class="more" aria-label="more" onclick={() => { menu = !menu; confirmClose = false }}>⋯</button>
+    <button class="more" aria-label="more" onclick={() => { menu = !menu; confirmClose = false; renaming = null }}>⋯</button>
   </header>
 
   {#if menu}
@@ -175,6 +186,15 @@
         <button disabled={busy} onclick={() => { menu = false; act(() => api.action(id, 'resume')) }}>resume</button>
       {:else}
         <button disabled={busy} onclick={() => { menu = false; act(() => api.action(id, 'pause')) }}>pause</button>
+      {/if}
+      {#if renaming === null}
+        <button disabled={busy} onclick={() => (renaming = task?.name ?? '')}>rename</button>
+      {:else}
+        <form class="rename" onsubmit={(e) => { e.preventDefault(); rename() }}>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input bind:value={renaming} autofocus autocapitalize="off" spellcheck="false" enterkeyhint="done" />
+          <button type="submit" disabled={busy || !renaming.trim()}>save</button>
+        </form>
       {/if}
       {#if task?.view === 'hidden'}
         <button disabled={busy} onclick={() => { menu = false; act(() => api.action(id, 'unhide')) }}>unhide</button>
@@ -312,6 +332,10 @@
   .menu button { min-height: var(--tap); padding: 0 16px; text-align: left; }
   .menu .hint { color: var(--dim); margin-left: 1ch; }
   .menu .danger { color: var(--red); }
+  .rename { display: flex; gap: 8px; padding: 6px 12px 6px 16px; }
+  .rename input { flex: 1; min-width: 0; font-size: 16px; color: var(--bright); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+  .rename input:focus { outline: none; border-color: var(--dim); }
+  .rename button { color: var(--accent); padding: 0 8px; }
 
   .scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; margin: 0; }
   .chat { padding: 8px 16px 16px; }

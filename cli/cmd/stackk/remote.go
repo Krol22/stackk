@@ -342,3 +342,20 @@ func dirsCmd(app *core.App, args []string) error {
 	}
 	return nil
 }
+
+// renameCmd renames a task (and its window); the name comes after the task, or on stdin.
+func renameCmd(app *core.App, args []string) error {
+	t := taskArg(app, args, "rename <task> <new name>   (no name: read it from stdin)")
+	name := strings.Join(args[1:], " ")
+	if len(args) == 1 {
+		b, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
+		if err != nil {
+			return err
+		}
+		name = string(b)
+	}
+	if name = strings.TrimSpace(name); name == "" {
+		return fmt.Errorf("a name can't be empty")
+	}
+	return app.Rename(t.ID, name)
+}

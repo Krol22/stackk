@@ -54,6 +54,13 @@ SINCE=$(field alpha phase_since)
 post "/api/tasks/$ID/key" "{\"keys\":[\"y\",\"enter\"],\"if_waiting\":$SINCE}" >/dev/null; sleep 3
 check "the current one goes through" '[ "$(field alpha phase)" = idle ]'
 
+step "rename"
+post "/api/tasks/$ID/rename" '{"name":"--alpha two"}' >/dev/null; sleep 2
+check "renamed, window too, a name that looks like a flag included" 'sk ls -json | grep -q "\"name\": \"--alpha two\"" && [ "$(winname "--alpha two")" = "--alpha two" ]'
+post "/api/tasks/$ID/rename" '{"name":"alpha"}' >/dev/null; sleep 2
+check "and back" '[ "$(field alpha view)" != "" ]'
+check "an empty name is refused" '[ "$(code -X POST -H "Content-Type: application/json" "$U/api/tasks/$ID/rename" -d "{\"name\":\" \"}")" = 400 ]'
+
 step "hide, unhide, close & remove"
 post "/api/tasks/$ID/hide" '{}' >/dev/null; sleep 1
 check "hidden" '[ "$(field alpha view)" = hidden ]'

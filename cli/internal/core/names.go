@@ -79,7 +79,7 @@ func (a *App) syncWindowName(id string) {
 // setWindowName renames a window and remembers the name, so a later difference can only mean
 // the user renamed it by hand.
 func (a *App) setWindowName(window, name string) {
-	a.T.Run("rename-window", "-t", window, name)
+	a.T.Run("rename-window", "-t", window, "--", name) // "--": a name may start with "-"
 	a.T.Run("set-option", "-w", "-t", window, "@stackk_wname", name)
 }
 

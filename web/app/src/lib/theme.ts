@@ -7,6 +7,7 @@ export const themes = [
   { id: 'gruvbox', label: 'gruvbox' },
   { id: 'nord', label: 'nord' },
   { id: 'tokyo', label: 'tokyo night' },
+  { id: 'evergreen', label: 'evergreen' },
 ] as const
 
 export type ThemeID = (typeof themes)[number]['id']
