@@ -47,6 +47,17 @@ check "paused" '[ "$(field alpha view)" = paused ]'
 post "/api/tasks/$ID/resume" '{}' >/dev/null; sleep 1
 check "back" '[ "$(field alpha view)" != paused ]'
 
+step "hide, unhide, close & remove"
+post "/api/tasks/$ID/hide" '{}' >/dev/null; sleep 1
+check "hidden" '[ "$(field alpha view)" = hidden ]'
+post "/api/tasks/$ID/unhide" '{}' >/dev/null; sleep 1
+check "back" '[ "$(field alpha view)" != hidden ]'
+mkdir -p "$S/work/gone"; sk new -stack work -name gone "$S/work/gone" >/dev/null; sleep 3
+GONE=$(idof gone); GW=$(sk ls -json | python3 -c 'import json,sys; print([t["window"] for t in json.load(sys.stdin) if t["name"]=="gone"][0])')
+post "/api/tasks/$GONE/rm" '{}' >/dev/null; sleep 2
+check "removed: off every list, its window closed" '! sk ls -json | grep -q "\"name\": \"gone\"" && ! t list-windows -a -F "#{window_id}" | grep -qx "$GW"'
+check "an unknown action is refused" '[ "$(code -X POST -H "Content-Type: application/json" "$U/api/tasks/$ID/explode" -d "{}")" = 404 ]'
+
 step "only you, only from the app"
 check "a POST from another site is refused" '[ "$(code -X POST -H "Content-Type: application/json" -H "Origin: https://evil.example" "$U/api/tasks/$ID/send" -d "{\"text\":\"x\"}")" = 403 ]'
 check "a form POST (no JSON) is refused" '[ "$(code -X POST "$U/api/tasks/$ID/send" -d "text=x")" = 415 ]'

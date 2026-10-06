@@ -11,6 +11,7 @@
   let text = $state('')
   let busy = $state(false)
   let menu = $state(false)
+  let confirmClose = $state(false)
   let files = $state<{ name: string; path: string }[]>([])
   let uploading = $state(0)
   let picker: HTMLInputElement | undefined = $state()
@@ -84,6 +85,20 @@
 
   const press = (k: string) => act(() => api.keys(id, [k]))
 
+  // hide and rm take the session off the list: back to it once done.
+  async function leave(action: 'hide' | 'rm') {
+    busy = true
+    try {
+      await api.action(id, action)
+      location.hash = '#/'
+    } catch (e) {
+      error = (e as Error).message
+      menu = confirmClose = false
+    } finally {
+      busy = false
+    }
+  }
+
   // Files go to the Mac first (stackk upload); the reply carries their paths, which the agent
   // reads like any file (screenshots included).
   async function attach(list: FileList | null) {
@@ -145,7 +160,7 @@
   <header>
     <a class="back" href="#/" aria-label="back">‹</a>
     <span class="name">{task?.name ?? id}</span>
-    <button class="more" aria-label="more" onclick={() => (menu = !menu)}>⋯</button>
+    <button class="more" aria-label="more" onclick={() => { menu = !menu; confirmClose = false }}>⋯</button>
   </header>
 
   {#if menu}
@@ -155,6 +170,15 @@
       {:else}
         <button disabled={busy} onclick={() => { menu = false; act(() => api.action(id, 'pause')) }}>pause</button>
       {/if}
+      {#if task?.view === 'hidden'}
+        <button disabled={busy} onclick={() => { menu = false; act(() => api.action(id, 'unhide')) }}>unhide</button>
+      {:else}
+        <button disabled={busy} onclick={() => leave('hide')}>hide <span class="hint">not a task: out of every list</span></button>
+      {/if}
+      <button class="danger" disabled={busy} onclick={() => (confirmClose ? leave('rm') : (confirmClose = true))}>
+        {confirmClose ? 'tap again to close it for good' : 'close & remove'}
+        {#if !confirmClose}<span class="hint">ends the agent, closes its window</span>{/if}
+      </button>
     </div>
   {/if}
 
@@ -270,6 +294,8 @@
   .more { width: var(--tap); height: var(--tap); color: var(--muted); font-size: 20px; }
   .menu { display: flex; flex-direction: column; border-bottom: 1px solid var(--line); background: var(--raised); }
   .menu button { min-height: var(--tap); padding: 0 16px; text-align: left; }
+  .menu .hint { color: var(--dim); margin-left: 1ch; }
+  .menu .danger { color: var(--red); }
 
   .scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; margin: 0; }
   .chat { padding: 8px 16px 16px; }

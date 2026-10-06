@@ -62,7 +62,7 @@ export const api = {
   dirs: (path = '') => call<Dirs>(`/api/dirs?path=${encodeURIComponent(path)}`),
   newTask: (body: { cwd: string; prompt: string; agent: string; stack: string }) => call<{ id: string }>('/api/new', body),
   keys: (id: string, keys: string[]) => call(`/api/tasks/${encodeURIComponent(id)}/key`, { keys }),
-  action: (id: string, action: 'pause' | 'resume') => call(`/api/tasks/${encodeURIComponent(id)}/${action}`, {}),
+  action: (id: string, action: 'pause' | 'resume' | 'hide' | 'unhide' | 'rm') => call(`/api/tasks/${encodeURIComponent(id)}/${action}`, {}),
 }
 
 export function ago(ts: number, now = Date.now()): string {

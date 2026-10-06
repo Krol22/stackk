@@ -8,6 +8,7 @@
   let running = $derived(tasks.filter((t) => t.view === 'running').sort((a, b) => a.phase_since - b.phase_since))
   let scheduled = $derived(tasks.filter((t) => t.view === 'deferred' || t.view === 'exited'))
   let paused = $derived(tasks.filter((t) => t.view === 'paused'))
+  let hidden = $derived(tasks.filter((t) => t.view === 'hidden'))
   let stackName = $derived(tasks.find((t) => t.stack_name)?.stack_name ?? '')
 
   let open = $state<Record<string, boolean>>({})
@@ -99,6 +100,7 @@
 
   {@render folded('scheduled', 'scheduled', scheduled)}
   {@render folded('paused', 'paused', paused)}
+  {@render folded('hidden', 'hidden', hidden)}
 </main>
 
 {#if settings}
