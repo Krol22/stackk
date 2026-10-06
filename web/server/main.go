@@ -116,6 +116,8 @@ func clientIP(r *http.Request) (ip string, local bool) {
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/tasks", s.tasks)
+	mux.HandleFunc("GET /api/dirs", s.dirs)
+	mux.HandleFunc("POST /api/new", s.newTask)
 	mux.HandleFunc("GET /api/tasks/{id}/screen", s.screen)
 	mux.HandleFunc("GET /api/tasks/{id}/transcript", s.transcript)
 	mux.HandleFunc("POST /api/tasks/{id}/send", s.send)
@@ -131,14 +133,17 @@ func (s *server) routes() http.Handler {
 // no cross-site POSTs (a page elsewhere must not type into your agents).
 func (s *server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.allow != "" && r.Header.Get("Tailscale-User-Login") != s.allow {
-			http.Error(w, "forbidden", http.StatusForbidden)
-			return
-		}
-		// The Mac itself (a browser on localhost) can run stackk anyway; other devices must be listed.
-		if ip, local := clientIP(r); len(s.devices) > 0 && !local && !s.devices[ip] {
-			http.Error(w, "this device is not allowed", http.StatusForbidden)
-			return
+		// The Mac itself (a browser on localhost) can run stackk anyway; anything that came
+		// through tailscale serve must be your login, from a listed device.
+		if ip, local := clientIP(r); !local {
+			if s.allow != "" && r.Header.Get("Tailscale-User-Login") != s.allow {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			if len(s.devices) > 0 && !s.devices[ip] {
+				http.Error(w, "this device is not allowed", http.StatusForbidden)
+				return
+			}
 		}
 		if r.Method != http.MethodGet {
 			if o := r.Header.Get("Origin"); o != "" {
@@ -315,6 +320,69 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.run(r.Context(), string(body), "upload", "-json", id, name)
 	s.reply(w, out, err)
+}
+
+// folder accepts an absolute path (never one that looks like a flag); "" is your home.
+func folder(p string) bool {
+	return p == "" || strings.HasPrefix(p, "/") && len(p) < 1024 && !strings.ContainsRune(p, 0)
+}
+
+func (s *server) dirs(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	if !folder(p) {
+		http.Error(w, "bad folder", http.StatusBadRequest)
+		return
+	}
+	args := []string{"dirs", "-json"}
+	if p != "" {
+		args = append(args, p)
+	}
+	out, err := s.run(r.Context(), "", args...)
+	s.reply(w, out, err)
+}
+
+var stackRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+
+// newTask starts a session in a folder picked with dirs: `stackk dirs` vets it first (only your
+// home folder), then `stackk new` starts the agent.
+func (s *server) newTask(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Cwd    string `json:"cwd"`
+		Prompt string `json:"prompt"`
+		Agent  string `json:"agent"`
+		Stack  string `json:"stack"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+		http.Error(w, "bad JSON", http.StatusBadRequest)
+		return
+	}
+	if body.Agent == "" {
+		body.Agent = "claude"
+	}
+	if body.Cwd == "" || !folder(body.Cwd) || (body.Agent != "claude" && body.Agent != "omp") ||
+		(body.Stack != "" && !stackRe.MatchString(body.Stack)) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.run(r.Context(), "", "dirs", body.Cwd); err != nil {
+		s.reply(w, nil, err)
+		return
+	}
+	args := []string{"new", "-agent", body.Agent}
+	if body.Stack != "" {
+		args = append(args, "-stack", body.Stack)
+	}
+	args = append(args, body.Cwd)
+	if p := strings.TrimSpace(body.Prompt); p != "" {
+		args = append(args, p) // after the folder: positional, whatever it starts with
+	}
+	out, err := s.run(r.Context(), "", args...)
+	if err != nil {
+		s.reply(w, nil, err)
+		return
+	}
+	b, _ := json.Marshal(map[string]string{"id": strings.TrimSpace(string(out))})
+	s.reply(w, b, nil)
 }
 
 // action runs the task commands that take nothing else: pause, resume.

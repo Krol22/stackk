@@ -55,8 +55,8 @@ check "a key that looks like a flag is refused" '[ "$(code -X POST -H "Content-T
 kill $WEBPID; sleep 0.5
 "$S/bin/stackk-web" -addr 127.0.0.1:$PORT -stackk "$S/bin/stackk" -allow you@github > "$S/web.log" 2>&1 &
 WEBPID=$!; sleep 1
-check "with -allow, a stranger is refused" '[ "$(code -H "Tailscale-User-Login: stranger@github" "$U/api/tasks")" = 403 ]'
-check "…and you are let in" '[ "$(code -H "Tailscale-User-Login: you@github" "$U/api/tasks")" = 200 ]'
+check "with -allow, a stranger is refused" '[ "$(code -H "X-Forwarded-For: 100.64.0.9" -H "Tailscale-User-Login: stranger@github" "$U/api/tasks")" = 403 ]'
+check "…and you are let in" '[ "$(code -H "X-Forwarded-For: 100.64.0.9" -H "Tailscale-User-Login: you@github" "$U/api/tasks")" = 200 ]'
 
 kill $WEBPID; sleep 0.5
 "$S/bin/stackk-web" -addr 127.0.0.1:$PORT -stackk "$S/bin/stackk" -devices 100.90.141.44 > "$S/web.log" 2>&1 &
@@ -64,6 +64,23 @@ WEBPID=$!; sleep 1
 check "with -devices, another tailnet device is refused" '[ "$(code -H "X-Forwarded-For: 100.103.252.78" "$U/api/tasks")" = 403 ]'
 check "…the listed one is let in" '[ "$(code -H "X-Forwarded-For: 100.90.141.44" "$U/api/tasks")" = 200 ]'
 check "…and so is the Mac itself, on localhost" '[ "$(code "$U/api/tasks")" = 200 ]'
+
+step "a new session, from a folder picked on the phone"
+kill $WEBPID; sleep 0.5
+mkdir -p "$S/home/code/newone/.git"
+HOME="$S/home" "$S/bin/stackk-web" -addr 127.0.0.1:$PORT -stackk "$S/bin/stackk" > "$S/web.log" 2>&1 &
+WEBPID=$!; sleep 1
+check "the home folder lists its folders, repos marked" 'get "/api/dirs" | python3 -c "import json,sys; d=json.load(sys.stdin); assert [x[\"name\"] for x in d[\"dirs\"]]==[\"code\"], d"'
+check "a repo inside it" 'get "/api/dirs?path=$S/home/code" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"dirs\"][0][\"git\"] and d[\"parent\"], d"'
+check "nothing outside the home folder" 'get "/api/dirs?path=/etc" | grep -q "outside your home folder"'
+NEW=$(post /api/new "{\"cwd\":\"$S/home/code/newone\",\"prompt\":\"hello from the phone\",\"stack\":\"work\"}" | python3 -c "import json,sys; print(json.load(sys.stdin)[\"id\"])"); sleep 4
+check "it starts in the stack with its first prompt" '[ "$(sk ls -json | python3 -c "import json,sys; print([t[\"last_msg\"] for t in json.load(sys.stdin) if t[\"id\"]==sys.argv[1]][0])" "$NEW")" = "reply: hello from the phone" ]'
+mkdir -p "$S/home/code/fresh"; touch "$S/home/code/fresh/.untrusted"
+FRESH=$(post /api/new "{\"cwd\":\"$S/home/code/fresh\",\"stack\":\"work\"}" | python3 -c "import json,sys; print(json.load(sys.stdin)[\"id\"])"); sleep 3
+check "a new folder: the app sees Claude asking to trust it" 'get "/api/tasks/$FRESH/transcript" | python3 -c "import json,sys; assert json.load(sys.stdin).get(\"asks_trust\")"'
+post "/api/tasks/$FRESH/key" '{"keys":["down","enter"]}' >/dev/null; sleep 3
+check "trust (down, enter) lets the session start" '! get "/api/tasks/$FRESH/transcript" | grep -q asks_trust && [ "$(sk ls -json | python3 -c "import json,sys; print([t[\"run_state\"] for t in json.load(sys.stdin) if t[\"id\"]==sys.argv[1]][0])" "$FRESH")" = live ]'
+check "and never outside the home folder" 'post /api/new "{\"cwd\":\"/tmp\",\"stack\":\"work\"}" | grep -q "outside your home folder"'
 
 echo
 if [ $fails -eq 0 ]; then echo "all passed ($n steps)"; else echo "$fails failed"; fi

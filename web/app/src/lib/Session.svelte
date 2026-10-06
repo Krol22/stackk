@@ -6,6 +6,7 @@
   let { id, task }: { id: string; task?: Task } = $props()
 
   let messages = $state<Message[]>([])
+  let asksTrust = $state(false) // a new session waiting on Claude's "do you trust this folder?"
   let error = $state('')
   let text = $state('')
   let busy = $state(false)
@@ -47,7 +48,9 @@
 
   async function refresh() {
     try {
-      messages = (await api.transcript(id)).messages
+      const tr = await api.transcript(id)
+      messages = tr.messages
+      asksTrust = !!tr.asks_trust
       error = ''
       if (stuck) {
         await tick()
@@ -181,7 +184,16 @@
   <div class="dock" class:keyboard>
     {#if error}<button class="error" onclick={() => (error = '')}>{error}</button>{/if}
 
-    {#if waiting}
+    {#if asksTrust}
+      <div class="ask">
+        <p class="q">Claude asks: do you trust this folder?</p>
+        <pre class="cmd">{task?.cwd ?? ''}</pre>
+        <div class="row">
+          <button class="choice yes" disabled={busy} onclick={() => act(() => api.keys(id, ['down', 'enter']))}>trust</button>
+          <button class="choice no" disabled={busy} onclick={() => press('esc')}>no, exit</button>
+        </div>
+      </div>
+    {:else if waiting}
       <!-- what the agent waits for, where your thumb is -->
       <div class="ask">
         {#if question}
@@ -225,6 +237,7 @@
         autocapitalize="off"
         spellcheck="false"
         bind:value={text}
+        disabled={asksTrust}
         onkeydown={onKeydown}
         onfocus={refit}
         onblur={() => { window.scrollTo(0, 0); refit() }}

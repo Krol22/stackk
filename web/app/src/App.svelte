@@ -3,6 +3,7 @@
   import { api, poll, type Task } from './lib/api'
   import TaskList from './lib/TaskList.svelte'
   import Session from './lib/Session.svelte'
+  import NewSession from './lib/NewSession.svelte'
 
   let tasks = $state<Task[]>([])
   let error = $state('')
@@ -39,7 +40,9 @@
   <div class="offline">offline: no connection to your Mac</div>
 {/if}
 
-{#if openID}
+{#if route === '#/new'}
+  <NewSession stack={tasks.find((t) => t.stack_name)?.stack_name ?? ''} />
+{:else if openID}
   <Session id={openID} task={open} />
 {:else}
   <TaskList {tasks} {error} />

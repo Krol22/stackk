@@ -68,11 +68,18 @@ func main() {
 		sessionID, source, args = args[1], "resume", args[2:]
 	}
 	fmt.Printf("fake claude · %s · %s\n", sessionID, source)
+	in := bufio.NewScanner(os.Stdin)
+	if _, err := os.Stat(".untrusted"); err == nil { // Claude's folder trust prompt, before any hook
+		fmt.Print("Quick safety check: Is this a project you created or one you trust?\n❯ No, exit\n  Yes, I trust this folder\n")
+		if !in.Scan() || !strings.Contains(in.Text(), "[B") { // down, then enter: yes
+			os.Exit(0)
+		}
+		os.Remove(".untrusted")
+	}
 	hook(map[string]any{"hook_event_name": "SessionStart", "source": source})
 	if len(args) > 0 {
 		turn(strings.Join(args, " "), nil)
 	}
-	in := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("> ")
 		if !in.Scan() {

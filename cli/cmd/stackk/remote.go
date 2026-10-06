@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -141,25 +142,32 @@ func transcriptCmd(app *core.App, args []string) error {
 	asJSON := fs.Bool("json", false, "JSON output")
 	pos := flagsAnywhere(fs, args)
 	t := taskArg(app, pos, "transcript [-n count] [-json] <task>")
-	if t.SessionPath == "" {
-		return fmt.Errorf("%s has no transcript yet (it hasn't talked to stackk's hooks)", t.Name)
+	var msgs []sessions.Message
+	if t.SessionPath != "" { // empty until the agent's first hook
+		path := t.SessionPath
+		if t.Agent == "omp" { // recorded from a subagent's events by stackk before it told them apart
+			path, _ = sessions.OmpMain(path)
+		}
+		var err error
+		if msgs, err = sessions.Messages(t.Agent, path, *n); err != nil {
+			return err
+		}
 	}
-	path := t.SessionPath
-	if t.Agent == "omp" { // recorded from a subagent's events by stackk before it told them apart
-		path, _ = sessions.OmpMain(path)
-	}
-	msgs, err := sessions.Messages(t.Agent, path, *n)
-	if err != nil {
-		return err
-	}
+	// A new session can be stuck before its first hook, on Claude's "do you trust this folder?":
+	// nothing in the transcript says so, the screen does (and only until that first hook).
+	trust := t.LastEventAt == 0 && t.RunState != store.RunExited && asksTrust(app, t.ID)
 	if *asJSON {
 		if msgs == nil {
 			msgs = []sessions.Message{}
 		}
 		return printJSON(struct {
-			Task     taskJSON           `json:"task"`
-			Messages []sessions.Message `json:"messages"`
-		}{toJSON(t, stackNames(app)), msgs})
+			Task      taskJSON           `json:"task"`
+			Messages  []sessions.Message `json:"messages"`
+			AsksTrust bool               `json:"asks_trust,omitempty"` // answer with key down, enter (yes) or esc (no)
+		}{toJSON(t, stackNames(app)), msgs, trust})
+	}
+	if trust {
+		fmt.Println("asks: do you trust this folder? (stackk key <task> down enter: yes)")
 	}
 	for _, m := range msgs {
 		switch m.Role {
@@ -179,6 +187,15 @@ func transcriptCmd(app *core.App, args []string) error {
 		}
 	}
 	return nil
+}
+
+func asksTrust(app *core.App, id string) bool {
+	lines, err := app.Screen(id, 0)
+	if err != nil {
+		return false
+	}
+	screen := strings.Join(lines, "\n")
+	return strings.Contains(screen, "trust this folder") || strings.Contains(screen, "one you trust")
 }
 
 func keyCmd(app *core.App, args []string) error {
@@ -235,5 +252,89 @@ func uploadCmd(app *core.App, args []string) error {
 		return printJSON(map[string]any{"path": path, "size": n})
 	}
 	fmt.Println(path)
+	return nil
+}
+
+// macFolders are the home folders macOS makes, where no code lives.
+var macFolders = map[string]bool{"Library": true, "Applications": true, "Applications (Parallels)": true,
+	"Movies": true, "Music": true, "Pictures": true, "Public": true}
+
+type dirEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Git  bool   `json:"git,omitempty"` // a repository: likely where a session should start
+}
+
+// dirsCmd lists the folders in one folder, for picking where a session starts without typing a
+// path. It never leaves your home folder: that is what a phone may browse.
+func dirsCmd(app *core.App, args []string) error {
+	fs := flag.NewFlagSet("dirs", flag.ExitOnError)
+	asJSON := fs.Bool("json", false, "JSON output")
+	pos := flagsAnywhere(fs, args)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dir := home
+	if len(pos) > 0 && pos[0] != "" {
+		if dir, err = filepath.Abs(pos[0]); err != nil {
+			return err
+		}
+	}
+	if real, err := filepath.EvalSymlinks(home); err == nil {
+		home = real
+	}
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
+	if rel, err := filepath.Rel(home, dir); err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+		return fmt.Errorf("%s is outside your home folder", dir)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	out := struct {
+		Path   string     `json:"path"`
+		Parent string     `json:"parent,omitempty"`
+		Dirs   []dirEntry `json:"dirs"`
+		Recent []dirEntry `json:"recent,omitempty"`
+	}{Path: dir, Dirs: []dirEntry{}}
+	if dir != home {
+		out.Parent = filepath.Dir(dir)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") || name == "node_modules" || dir == home && macFolders[name] {
+			continue
+		}
+		p := filepath.Join(dir, name)
+		if st, err := os.Stat(p); err != nil || !st.IsDir() {
+			continue
+		}
+		_, gerr := os.Stat(filepath.Join(p, ".git"))
+		out.Dirs = append(out.Dirs, dirEntry{Name: name, Path: p, Git: gerr == nil})
+	}
+	if dir == home { // where your sessions ran lately, newest first
+		tasks, _ := store.Tasks(app.DB, "")
+		sort.Slice(tasks, func(i, j int) bool { return tasks[i].CreatedAt > tasks[j].CreatedAt })
+		seen := map[string]bool{}
+		for _, t := range tasks {
+			if t.Cwd == "" || seen[t.Cwd] || len(out.Recent) == 8 {
+				continue
+			}
+			if st, err := os.Stat(t.Cwd); err != nil || !st.IsDir() {
+				continue
+			}
+			seen[t.Cwd] = true
+			out.Recent = append(out.Recent, dirEntry{Name: filepath.Base(t.Cwd), Path: t.Cwd})
+		}
+	}
+	if *asJSON {
+		return printJSON(out)
+	}
+	for _, d := range out.Dirs {
+		fmt.Println(d.Path)
+	}
 	return nil
 }
