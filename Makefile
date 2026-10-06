@@ -1,7 +1,7 @@
 # stackk: the CLI and dashboard live in cli/, the mobile web UI in web/.
 PREFIX ?= $(HOME)/.local/bin
 
-.PHONY: build install setup test e2e perf demo screenshots web web-install web-dev web-test
+.PHONY: build install setup test e2e perf demo screenshots web web-install web-dev web-test web-screenshots
 
 build install setup test e2e perf demo screenshots:
 	$(MAKE) -C cli $@
@@ -21,3 +21,7 @@ web-dev:
 
 web-test: web
 	bash web/test/api.sh
+
+# README screenshot of the mobile UI (docs/mobile.png): a scene on its own tmux server, headless Chrome.
+web-screenshots: web
+	bash web/test/screenshot.sh

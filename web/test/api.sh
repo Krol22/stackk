@@ -58,6 +58,13 @@ WEBPID=$!; sleep 1
 check "with -allow, a stranger is refused" '[ "$(code -H "Tailscale-User-Login: stranger@github" "$U/api/tasks")" = 403 ]'
 check "…and you are let in" '[ "$(code -H "Tailscale-User-Login: you@github" "$U/api/tasks")" = 200 ]'
 
+kill $WEBPID; sleep 0.5
+"$S/bin/stackk-web" -addr 127.0.0.1:$PORT -stackk "$S/bin/stackk" -devices 100.90.141.44 > "$S/web.log" 2>&1 &
+WEBPID=$!; sleep 1
+check "with -devices, another tailnet device is refused" '[ "$(code -H "X-Forwarded-For: 100.103.252.78" "$U/api/tasks")" = 403 ]'
+check "…the listed one is let in" '[ "$(code -H "X-Forwarded-For: 100.90.141.44" "$U/api/tasks")" = 200 ]'
+check "…and so is the Mac itself, on localhost" '[ "$(code "$U/api/tasks")" = 200 ]'
+
 echo
 if [ $fails -eq 0 ]; then echo "all passed ($n steps)"; else echo "$fails failed"; fi
 t kill-server
