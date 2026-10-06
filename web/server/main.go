@@ -162,6 +162,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/tasks/{id}/send", s.send)
 	mux.HandleFunc("POST /api/tasks/{id}/key", s.key)
 	mux.HandleFunc("POST /api/tasks/{id}/upload", s.upload)
+	mux.HandleFunc("POST /api/tasks/{id}/rename", s.rename)
 	mux.HandleFunc("POST /api/tasks/{id}/{action}", s.action)
 	app, _ := fs.Sub(static, "static/app")
 	mux.Handle("GET /", spa(http.FS(app)))
@@ -346,6 +347,23 @@ func (s *server) key(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "-if-waiting", strconv.FormatInt(body.IfWaiting, 10))
 	}
 	out, err := s.run(r.Context(), "", append(append(args, id), body.Keys...)...)
+	s.reply(w, out, err)
+}
+
+// rename passes the new name on stdin: whatever it is, it can't become a flag.
+func (s *server) rename(w http.ResponseWriter, r *http.Request) {
+	id, ok := taskID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+		http.Error(w, "bad JSON: want {\"name\": \"...\"}", http.StatusBadRequest)
+		return
+	}
+	out, err := s.run(r.Context(), body.Name, "rename", id)
 	s.reply(w, out, err)
 }
 

@@ -49,6 +49,7 @@ export const api = {
   tasks: () => call<Task[]>('/api/tasks'),
   transcript: (id: string, n = 60) => call<{ task: Task; messages: Message[]; asks_trust?: boolean }>(`/api/tasks/${encodeURIComponent(id)}/transcript?n=${n}`),
   send: (id: string, text: string, enter = true) => call(`/api/tasks/${encodeURIComponent(id)}/send`, { text, enter }),
+  rename: (id: string, name: string) => call(`/api/tasks/${encodeURIComponent(id)}/rename`, { name }),
   upload: async (id: string, file: File): Promise<{ path: string; size: number }> => {
     const res = await fetch(`/api/tasks/${encodeURIComponent(id)}/upload?name=${encodeURIComponent(file.name || 'file')}`, {
       method: 'POST',
