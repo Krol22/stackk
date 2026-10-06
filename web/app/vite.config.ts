@@ -5,5 +5,6 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [svelte()],
   build: { outDir: '../server/static/app', emptyOutDir: true },
-  server: { host: true, proxy: { '/api': 'http://127.0.0.1:7878' } },
+  // localhost only: its proxy reaches stackk-web as the Mac itself, past -allow and -devices
+  server: { host: '127.0.0.1', proxy: { '/api': 'http://127.0.0.1:7878' } },
 })

@@ -147,9 +147,10 @@ func permissionDetail(name string, input json.RawMessage) string {
 func questionDetail(input json.RawMessage) string {
 	var in struct {
 		Questions []struct {
-			Question string `json:"question"`
-			Header   string `json:"header"`
-			Options  []struct {
+			Question    string `json:"question"`
+			Header      string `json:"header"`
+			MultiSelect bool   `json:"multiSelect,omitempty"`
+			Options     []struct {
 				Label       string `json:"label"`
 				Description string `json:"description"`
 			} `json:"options"`

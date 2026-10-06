@@ -282,6 +282,9 @@ func agentArgv(agent, prompt, resume string) ([]string, error) {
 		argv = append(argv, "--resume", resume)
 	}
 	if prompt != "" {
+		if strings.HasPrefix(prompt, "-") { // a prompt, never an option of the agent's
+			prompt = " " + prompt
+		}
 		argv = append(argv, prompt)
 	}
 	return argv, nil

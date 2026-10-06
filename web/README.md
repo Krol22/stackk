@@ -12,7 +12,7 @@ Your stack in your pocket: see what waits for you, read what the agent said, app
 
 ## How it works
 
-`stackk-web` is a small Go server that runs on your Mac and serves the app (Svelte, built into the binary). It knows stackk only through the CLI: every request runs `stackk ls -json`, `transcript`, `send`, `key`, `upload`, `pause` or `resume`. The phone reaches it over [Tailscale](https://tailscale.com).
+`stackk-web` is a small Go server that runs on your Mac and serves the app (Svelte, built into the binary). It knows stackk only through the CLI: every request runs `stackk ls -json`, `transcript`, `send`, `key`, `upload`, `dirs`, `new`, `pause` and the like, and every 10 seconds `stackk reconcile`, which keeps the state current when no dashboard runs. The phone reaches it over [Tailscale](https://tailscale.com).
 
 ## Set up
 
@@ -29,9 +29,11 @@ On the phone: open that address in Safari, then Share → **Add to Home Screen**
 Whoever reaches `stackk-web` can type into your agents, and your agents can run commands on your Mac. So:
 
 - **It listens on localhost only.** Nothing outside your Mac reaches it until you publish it with `tailscale serve`, which keeps it inside your tailnet, over HTTPS.
-- **`-devices iphone-15` lets in only the devices you name** (MagicDNS names or Tailscale IPs); the Mac itself, on localhost, always works. **`-allow you@gmail.com` lets in only your Tailscale login.** Use both.
+- **`-devices iphone-15` lets in only the devices you name** (MagicDNS names or Tailscale IPs). **`-allow you@gmail.com` lets in only your Tailscale login**, as vouched for by `tailscale serve`: with it, a connection that didn't come through `tailscale serve` is refused. Use both. The Mac itself, on localhost, always works: anyone logged in to your Mac as another user could reach it too, so keep it on a Mac that is yours alone.
+- **It answers only to its own names**: localhost and your tailnet's `*.ts.net` / Tailscale addresses. A web page you open on the Mac can't point its own domain at `127.0.0.1` (DNS rebinding) and drive the agents from your browser.
 - **No other site can drive it.** Requests that change anything must be JSON (or a file upload) from the app's own origin: a link or a form on another page is refused before it reaches stackk.
-- **Nothing from the request reaches a shell.** Task ids and key names are checked against a strict pattern and can't pass for CLI flags; replies and files go to the CLI on stdin. Replies are typed into the agent as text, with control characters removed.
+- **Nothing from the request reaches a shell.** Task ids and key names are checked against a strict pattern and can't pass for CLI flags; replies and files go to the CLI on stdin. Replies are typed into the agent as text, with control characters removed, and can't pass for tmux options; a first prompt can't pass for an option of the agent's (`--dangerously-skip-permissions` is just text).
+- **An answer goes to the prompt you saw.** Yes / always / no and question options carry which prompt they answer; if the agent moved on to another one meanwhile, the tap is refused instead of approving something you didn't read.
 - **What agents write can't run in the app.** Their markdown is rendered through a sanitizer (DOMPurify): no scripts, no images, no embedded pages, links open outside the app.
 - **Uploads stay private.** They go to `~/.local/state/stackk/uploads/<task>/` (only you can read it), at most 25 MB each.
 

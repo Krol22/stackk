@@ -26,7 +26,7 @@ export type Task = {
 export type Waiting = {
   tool?: string
   input?: string
-  questions?: { question: string; header?: string; options?: { label: string; description?: string }[] }[]
+  questions?: { question: string; header?: string; multiSelect?: boolean; options?: { label: string; description?: string }[] }[]
 }
 
 export type Dir = { name: string; path: string; git?: boolean }
@@ -61,7 +61,9 @@ export const api = {
   },
   dirs: (path = '') => call<Dirs>(`/api/dirs?path=${encodeURIComponent(path)}`),
   newTask: (body: { cwd: string; prompt: string; agent: string; stack: string }) => call<{ id: string }>('/api/new', body),
-  keys: (id: string, keys: string[]) => call(`/api/tasks/${encodeURIComponent(id)}/key`, { keys }),
+  // ifWaiting: the prompt the keys answer (the task's phase_since); refused if the agent moved on.
+  keys: (id: string, keys: string[], ifWaiting?: number) =>
+    call(`/api/tasks/${encodeURIComponent(id)}/key`, { keys, if_waiting: ifWaiting ?? 0 }),
   action: (id: string, action: 'pause' | 'resume' | 'hide' | 'unhide' | 'rm') => call(`/api/tasks/${encodeURIComponent(id)}/${action}`, {}),
 }
 
