@@ -25,6 +25,9 @@ type Message struct {
 // Messages reads the last limit messages of an agent's transcript.
 func Messages(agent, path string, limit int) ([]Message, error) {
 	fh, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil, nil // the agent hasn't written anything yet
+	}
 	if err != nil {
 		return nil, err
 	}

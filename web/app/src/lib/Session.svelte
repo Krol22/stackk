@@ -17,16 +17,24 @@
   let scroller: HTMLElement | undefined = $state()
   let root: HTMLElement | undefined = $state()
 
-  // With the keyboard open, iOS shrinks only the visible part of the page: keep the reply box
-  // on top of the keyboard. Otherwise the view is pinned to the window's edges (CSS).
-  onMount(() => {
+  // With the keyboard open, iOS shrinks only the visible part of the page and scrolls it to the
+  // input: fit the view to what is left above the keyboard, header included. Otherwise the view is
+  // pinned to the window's edges (CSS).
+  let keyboard = $state(false)
+  function fit() {
     const vv = window.visualViewport
     if (!vv || !root) return
-    const fit = () => {
-      const keyboard = vv.height < window.innerHeight - 120
-      root!.style.height = keyboard ? `${vv.height}px` : ''
-      root!.style.transform = keyboard ? `translateY(${vv.offsetTop}px)` : ''
-    }
+    keyboard = vv.height < window.innerHeight - 120
+    if (keyboard && vv.offsetTop > 0) window.scrollTo(0, 0)
+    root.style.height = keyboard ? `${vv.height}px` : ''
+    root.style.transform = keyboard && vv.offsetTop > 0 ? `translateY(${vv.offsetTop}px)` : ''
+  }
+  // The keyboard animates in: fit again once it has settled.
+  const refit = () => [0, 100, 350].forEach((ms) => setTimeout(fit, ms))
+
+  onMount(() => {
+    const vv = window.visualViewport
+    if (!vv) return
     fit()
     vv.addEventListener('resize', fit)
     vv.addEventListener('scroll', fit)
@@ -170,7 +178,7 @@
       {#if task?.phase === 'working'}<p class="working">working…</p>{/if}
     </div>
 
-  <div class="dock">
+  <div class="dock" class:keyboard>
     {#if error}<button class="error" onclick={() => (error = '')}>{error}</button>{/if}
 
     {#if waiting}
@@ -218,7 +226,8 @@
         spellcheck="false"
         bind:value={text}
         onkeydown={onKeydown}
-        onblur={() => window.scrollTo(0, 0)}
+        onfocus={refit}
+        onblur={() => { window.scrollTo(0, 0); refit() }}
       ></textarea>
       <button class="send" type="submit" disabled={busy || uploading > 0 || (!text.trim() && !files.length)} aria-label="send">↑</button>
     </form>
@@ -282,6 +291,7 @@
   .working { color: var(--blue); }
 
   .dock { border-top: 1px solid var(--line); padding: 8px 12px max(env(safe-area-inset-bottom), 8px); background: var(--bg); }
+  .dock.keyboard { padding-bottom: 8px; } /* the home bar's margin is under the keyboard */
   .error { display: block; width: 100%; text-align: left; color: var(--red); padding: 4px 0 8px; }
   .ask { padding-bottom: 8px; }
   .q { margin: 2px 0 8px; color: var(--bright); }

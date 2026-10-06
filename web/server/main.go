@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,7 +34,8 @@ var static embed.FS
 var (
 	addr   = flag.String("addr", "127.0.0.1:7878", "listen address; keep it on localhost and publish it with `tailscale serve`")
 	stackk = flag.String("stackk", "", "the stackk binary (default: stackk in PATH, then ~/.local/bin/stackk)")
-	allow  = flag.String("allow", "", "with tailscale serve: the only Tailscale login let in (e.g. you@github)")
+	allow   = flag.String("allow", "", "with tailscale serve: the only Tailscale login let in (e.g. you@gmail.com)")
+	devices = flag.String("devices", "", "the only tailnet devices let in, by name or Tailscale IP (e.g. iphone-15); comma-separated")
 )
 
 func main() {
@@ -44,6 +46,12 @@ func main() {
 		log.Fatal(err)
 	}
 	s := &server{bin: bin, allow: *allow}
+	if *devices != "" {
+		if s.devices, err = resolveDevices(*devices); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("only these devices are let in: %s", *devices)
+	}
 	log.Printf("stackk-web on http://%s (stackk: %s)", *addr, bin)
 	log.Fatal(http.ListenAndServe(*addr, s.routes()))
 }
@@ -64,8 +72,45 @@ func findStackk(given string) (string, error) {
 }
 
 type server struct {
-	bin   string
-	allow string
+	bin     string
+	allow   string
+	devices map[string]bool // tailnet IPs; empty: any device
+}
+
+// resolveDevices turns device names (MagicDNS) or IPs into the set of IPs let in.
+func resolveDevices(list string) (map[string]bool, error) {
+	ips := map[string]bool{}
+	for _, d := range strings.Split(list, ",") {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		if ip := net.ParseIP(d); ip != nil {
+			ips[ip.String()] = true
+			continue
+		}
+		addrs, err := net.LookupHost(d)
+		if err != nil {
+			return nil, fmt.Errorf("device %q: %v (is MagicDNS on? an IP works too)", d, err)
+		}
+		for _, a := range addrs {
+			ips[a] = true
+		}
+	}
+	return ips, nil
+}
+
+// clientIP is the device a request comes from. Behind tailscale serve the connection is from
+// localhost and the device is in X-Forwarded-For, which only a local proxy can have set.
+func clientIP(r *http.Request) (ip string, local bool) {
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if a := net.ParseIP(host); a != nil && a.IsLoopback() {
+		if fwd := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); fwd != "" {
+			return fwd, false
+		}
+		return host, true
+	}
+	return host, false
 }
 
 func (s *server) routes() http.Handler {
@@ -88,6 +133,11 @@ func (s *server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.allow != "" && r.Header.Get("Tailscale-User-Login") != s.allow {
 			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		// The Mac itself (a browser on localhost) can run stackk anyway; other devices must be listed.
+		if ip, local := clientIP(r); len(s.devices) > 0 && !local && !s.devices[ip] {
+			http.Error(w, "this device is not allowed", http.StatusForbidden)
 			return
 		}
 		if r.Method != http.MethodGet {
