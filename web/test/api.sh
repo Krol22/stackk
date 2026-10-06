@@ -47,6 +47,13 @@ check "paused" '[ "$(field alpha view)" = paused ]'
 post "/api/tasks/$ID/resume" '{}' >/dev/null; sleep 1
 check "back" '[ "$(field alpha view)" != paused ]'
 
+step "answers go to the prompt on screen"
+post "/api/tasks/$ID/send" '{"text":"ask"}' >/dev/null; sleep 2
+check "a stale answer is refused" 'post "/api/tasks/$ID/key" "{\"keys\":[\"y\",\"enter\"],\"if_waiting\":1}" | grep -q "moved on"'
+SINCE=$(field alpha phase_since)
+post "/api/tasks/$ID/key" "{\"keys\":[\"y\",\"enter\"],\"if_waiting\":$SINCE}" >/dev/null; sleep 3
+check "the current one goes through" '[ "$(field alpha phase)" = idle ]'
+
 step "hide, unhide, close & remove"
 post "/api/tasks/$ID/hide" '{}' >/dev/null; sleep 1
 check "hidden" '[ "$(field alpha view)" = hidden ]'
@@ -61,6 +68,7 @@ check "an unknown action is refused" '[ "$(code -X POST -H "Content-Type: applic
 step "only you, only from the app"
 check "a POST from another site is refused" '[ "$(code -X POST -H "Content-Type: application/json" -H "Origin: https://evil.example" "$U/api/tasks/$ID/send" -d "{\"text\":\"x\"}")" = 403 ]'
 check "a form POST (no JSON) is refused" '[ "$(code -X POST "$U/api/tasks/$ID/send" -d "text=x")" = 415 ]'
+check "a request addressed to another host is refused (DNS rebinding)" '[ "$(code -H "Host: evil.example:7979" "$U/api/tasks")" = 403 ]'
 check "a task id that looks like a flag is refused" '[ "$(code "$U/api/tasks/-json/screen")" = 400 ]'
 check "a key that looks like a flag is refused" '[ "$(code -X POST -H "Content-Type: application/json" "$U/api/tasks/$ID/key" -d "{\"keys\":[\"-x\"]}")" = 400 ]'
 kill $WEBPID; sleep 0.5

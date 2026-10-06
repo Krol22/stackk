@@ -199,11 +199,15 @@ func asksTrust(app *core.App, id string) bool {
 }
 
 func keyCmd(app *core.App, args []string) error {
-	t := taskArg(app, args, "key <task> <key…>   (a letter, a digit or: "+strings.Join(core.KeyNames(), ", ")+")")
+	fs := flag.NewFlagSet("key", flag.ExitOnError)
+	since := fs.Int64("if-waiting", 0, "only if the agent still waits on the prompt that began then (phase_since)")
+	fs.Parse(args)
+	args = fs.Args()
+	t := taskArg(app, args, "key [-if-waiting time] <task> <key…>   (a letter, a digit or: "+strings.Join(core.KeyNames(), ", ")+")")
 	if len(args) < 2 {
 		die(fmt.Errorf("usage: stackk key <task> <key…>"))
 	}
-	return app.Keys(t.ID, args[1:])
+	return app.Keys(t.ID, args[1:], *since)
 }
 
 // maxUpload bounds what a phone may put on this Mac in one file.

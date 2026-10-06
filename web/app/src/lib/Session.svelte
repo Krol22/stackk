@@ -83,7 +83,8 @@
     }
   }
 
-  const press = (k: string) => act(() => api.keys(id, [k]))
+  // An answer to the prompt on screen, and to no other: refused if the agent moved on meanwhile.
+  const press = (k: string) => act(() => api.keys(id, [k], task?.phase_since))
 
   // hide and rm take the session off the list: back to it once done.
   async function leave(action: 'hide' | 'rm') {
@@ -117,6 +118,7 @@
   }
 
   function send() {
+    if (busy) return
     const t = text.trim()
     if (!t && !files.length) return
     const paths = files.map((f) => f.path).join(' ')
@@ -153,6 +155,10 @@
   let waiting = $derived(task?.phase === 'waiting')
   let ask = $derived(waiting ? task?.waiting : undefined)
   let question = $derived(ask?.questions?.[0])
+  // Several questions, or several answers to one: the prompt steps through them, so offer the
+  // keys it takes rather than buttons that would only fit its first screen.
+  let stepping = $derived((ask?.questions?.length ?? 0) > 1 || !!question?.multiSelect)
+  const stepKeys: [string, string][] = [['up', '↑'], ['down', '↓'], ['space', 'select'], ['tab', 'next'], ['enter', 'submit'], ['esc', 'cancel']]
   let paused = $derived(task?.view === 'paused' || task?.run_state === 'exited')
 </script>
 
@@ -220,7 +226,17 @@
     {:else if waiting}
       <!-- what the agent waits for, where your thumb is -->
       <div class="ask">
-        {#if question}
+        {#if stepping}
+          {#each ask?.questions ?? [] as q, n (n)}
+            <p class="q">{n + 1}. {q.question}</p>
+            <p class="opts">{(q.options ?? []).map((o, i) => `${i + 1} ${o.label}`).join(' · ')}</p>
+          {/each}
+          <div class="keyrow">
+            {#each stepKeys as [k, label] (k)}
+              <button class="choice" disabled={busy} onclick={() => act(() => api.keys(id, [k]))}>{label}</button>
+            {/each}
+          </div>
+        {:else if question}
           <p class="q">{question.question}</p>
           {#each question.options ?? [] as o, i (i)}
             <button class="choice" disabled={busy} onclick={() => press(String(i + 1))}>
@@ -336,6 +352,9 @@
   .q { margin: 2px 0 8px; color: var(--bright); }
   .cmd { margin: 0 0 8px; padding: 8px 10px; background: var(--raised); color: var(--aqua); white-space: pre-wrap; word-break: break-word; max-height: 25dvh; overflow: auto; border-radius: 8px; font: inherit; }
   .row { display: flex; gap: 8px; }
+  .opts { margin: -4px 0 8px; color: var(--muted); }
+  .keyrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .keyrow .choice { text-align: center; margin: 0; }
   .row .choice { flex: 1; text-align: center; }
   .choice {
     display: block;

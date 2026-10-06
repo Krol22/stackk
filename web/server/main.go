@@ -52,6 +52,7 @@ func main() {
 		}
 		log.Printf("only these devices are let in: %s", *devices)
 	}
+	go s.reconcile()
 	log.Printf("stackk-web on http://%s (stackk: %s)", *addr, bin)
 	log.Fatal(http.ListenAndServe(*addr, s.routes()))
 }
@@ -100,17 +101,55 @@ func resolveDevices(list string) (map[string]bool, error) {
 	return ips, nil
 }
 
-// clientIP is the device a request comes from. Behind tailscale serve the connection is from
-// localhost and the device is in X-Forwarded-For, which only a local proxy can have set.
-func clientIP(r *http.Request) (ip string, local bool) {
+// reconcile keeps the stack's state current when no dashboard runs (that is who usually does
+// it): agents that exited, panes that are gone, windows added by hand.
+func (s *server) reconcile() {
+	for range time.Tick(10 * time.Second) {
+		if _, err := s.run(context.Background(), "", "reconcile"); err != nil {
+			log.Printf("reconcile: %v", err)
+		}
+	}
+}
+
+// origin is where a request comes from. A connection from this Mac is either tailscale serve,
+// which names the device (X-Forwarded-For) and you (Tailscale-User-Login), or the Mac itself.
+// Anything else came over the network directly: its address is real, any identity header isn't.
+type origin struct {
+	ip      string
+	local   bool // the Mac itself, not through tailscale serve
+	proxied bool // through tailscale serve: its headers can be trusted
+}
+
+func originOf(r *http.Request) origin {
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if a := net.ParseIP(host); a != nil && a.IsLoopback() {
 		if fwd := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); fwd != "" {
-			return fwd, false
+			return origin{ip: fwd, proxied: true}
 		}
-		return host, true
+		return origin{ip: host, local: true}
 	}
-	return host, false
+	return origin{ip: host}
+}
+
+// hostAllowed refuses requests addressed to any other name: a page on some site could otherwise
+// point its own domain at 127.0.0.1 (DNS rebinding) and drive the agents from your browser.
+func hostAllowed(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".ts.net") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && (ip.IsLoopback() || tailnetIP(ip))
+}
+
+// tailnetIP is an address Tailscale hands out (100.64.0.0/10, fd7a:115c:a1e0::/48).
+func tailnetIP(ip net.IP) bool {
+	_, v4, _ := net.ParseCIDR("100.64.0.0/10")
+	_, v6, _ := net.ParseCIDR("fd7a:115c:a1e0::/48")
+	return v4.Contains(ip) || v6.Contains(ip)
 }
 
 func (s *server) routes() http.Handler {
@@ -133,14 +172,18 @@ func (s *server) routes() http.Handler {
 // no cross-site POSTs (a page elsewhere must not type into your agents).
 func (s *server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The Mac itself (a browser on localhost) can run stackk anyway; anything that came
-		// through tailscale serve must be your login, from a listed device.
-		if ip, local := clientIP(r); !local {
-			if s.allow != "" && r.Header.Get("Tailscale-User-Login") != s.allow {
+		if !hostAllowed(r.Host) {
+			http.Error(w, "unknown host", http.StatusForbidden)
+			return
+		}
+		// The Mac itself (a browser on localhost) can run stackk anyway. Anything else must be a
+		// listed device, and with -allow your login, which only tailscale serve can vouch for.
+		if o := originOf(r); !o.local {
+			if s.allow != "" && (!o.proxied || r.Header.Get("Tailscale-User-Login") != s.allow) {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
-			if len(s.devices) > 0 && !s.devices[ip] {
+			if len(s.devices) > 0 && !s.devices[o.ip] {
 				http.Error(w, "this device is not allowed", http.StatusForbidden)
 				return
 			}
@@ -285,7 +328,8 @@ func (s *server) key(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Keys []string `json:"keys"`
+		Keys      []string `json:"keys"`
+		IfWaiting int64    `json:"if_waiting"` // the prompt the answer is for (task phase_since)
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil || len(body.Keys) == 0 {
 		http.Error(w, "bad JSON: want {\"keys\": [...]}", http.StatusBadRequest)
@@ -297,7 +341,11 @@ func (s *server) key(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	out, err := s.run(r.Context(), "", append([]string{"key", id}, body.Keys...)...)
+	args := []string{"key"}
+	if body.IfWaiting > 0 {
+		args = append(args, "-if-waiting", strconv.FormatInt(body.IfWaiting, 10))
+	}
+	out, err := s.run(r.Context(), "", append(append(args, id), body.Keys...)...)
 	s.reply(w, out, err)
 }
 

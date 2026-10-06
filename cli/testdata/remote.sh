@@ -21,9 +21,15 @@ check "text from stdin" '[ "$(field alpha last_msg)" = "reply: from stdin" ]'
 sk send alpha "$(printf 'esc \033]2;PWNED\007 bell')"; sleep 3
 check "control characters are dropped, not typed" '[ "$(field alpha last_msg)" = "reply: esc ]2;PWNED bell" ]'
 
+sk send alpha "-R"; sleep 3
+check "a reply that looks like an option is typed, not run" '[ "$(field alpha last_msg)" = "reply: -R" ]'
+sk send alpha "done;;"; sleep 3
+check "trailing semicolons arrive" '[ "$(field alpha last_msg)" = "reply: done;;" ]'
+
 step "key: answer a permission prompt"
 sk send alpha ask; sleep 2
 check "the agent waits for permission" '[ "$(field alpha view) $(field alpha phase)" = "stack waiting" ] && sk show alpha | grep -q "allow Bash"'
+check "an answer for a prompt that moved on is refused" 'sk key -if-waiting 12345 alpha y 2>&1 | grep -q "moved on"'
 sk key alpha y enter; sleep 3
 check "y + enter answered it" '[ "$(field alpha phase)" = idle ]'
 check "an unknown key is refused" '! sk key alpha F13 2>/dev/null && sk key alpha F13 2>&1 | grep -q "unknown key"'

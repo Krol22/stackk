@@ -47,3 +47,13 @@ func TestShellArgsNeverQuoteThePrompt(t *testing.T) {
 		t.Errorf("env %q", env)
 	}
 }
+
+func TestPromptIsNeverAnAgentOption(t *testing.T) {
+	argv, err := agentArgv("sh", "--dangerously-skip-permissions", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := argv[len(argv)-1]; last[0] == '-' {
+		t.Errorf("the prompt reached the agent as an option: %q", argv)
+	}
+}

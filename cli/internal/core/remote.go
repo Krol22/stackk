@@ -76,15 +76,24 @@ func (a *App) Send(id, text string, enter bool) error {
 		return err
 	}
 	text = safe.Text(strings.Join(strings.Fields(text), " "))
-	if text != "" {
-		if _, err := a.T.Run("send-keys", "-t", t.TmuxPane, "-l", text); err != nil {
-			return err
-		}
+	// One tmux command for all of it, so two replies sent at once can't interleave. "--" keeps a
+	// reply like "-R" from being read as an option; tmux takes an argument ending in ";" as the
+	// end of a command, so trailing semicolons go as key codes.
+	body := strings.TrimRight(text, ";")
+	var cmds [][]string
+	if body != "" {
+		cmds = append(cmds, []string{"send-keys", "-t", t.TmuxPane, "-l", "--", body})
+	}
+	for range len(text) - len(body) {
+		cmds = append(cmds, []string{"send-keys", "-t", t.TmuxPane, "-H", "3b"})
 	}
 	if enter {
-		_, err = a.T.Run("send-keys", "-t", t.TmuxPane, "Enter")
+		cmds = append(cmds, []string{"send-keys", "-t", t.TmuxPane, "Enter"})
 	}
-	return err
+	if len(cmds) == 0 {
+		return nil
+	}
+	return a.T.Chain(cmds...)
 }
 
 // keyNames are the keys Keys accepts besides single letters and digits.
@@ -99,10 +108,15 @@ func KeyNames() []string {
 }
 
 // Keys presses keys in a task's terminal: named ones (enter, esc, up, ctrl-c, …) or a letter or digit.
-func (a *App) Keys(id string, keys []string) error {
+// With waitingSince, only if the agent still waits on the prompt that began then: an answer meant
+// for one permission must not land on the next.
+func (a *App) Keys(id string, keys []string, waitingSince int64) error {
 	t, err := a.liveTask(id)
 	if err != nil {
 		return err
+	}
+	if waitingSince != 0 && (t.Phase != store.PhaseWaiting || t.PhaseSince != waitingSince) {
+		return fmt.Errorf("%s no longer asks that: it moved on", t.Name)
 	}
 	args := []string{"send-keys", "-t", t.TmuxPane}
 	for _, k := range keys {
