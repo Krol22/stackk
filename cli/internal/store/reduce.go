@@ -24,6 +24,7 @@ type Event struct {
 	Tool           string
 	ToolUseID      string
 	WaitingKind    string
+	Detail         string // wait: what is asked, as JSON
 }
 
 // The list a task shows up in. Hidden and paused are out of every list (the ⏸ modal),
@@ -71,6 +72,7 @@ func setPhase(t *Task, phase string, now int64) {
 	if phase != PhaseWaiting {
 		t.WaitingKind = ""
 		t.WaitingToolUseID = ""
+		t.WaitingDetail = ""
 	}
 }
 
@@ -135,6 +137,7 @@ func Reduce(t *Task, ev Event, now int64) bool {
 		setPhase(t, PhaseWaiting, now)
 		t.WaitingKind = ev.WaitingKind
 		t.WaitingToolUseID = ev.ToolUseID
+		t.WaitingDetail = ev.Detail
 		if ev.Msg != "" {
 			t.LastMsg = ev.Msg
 		}

@@ -1,21 +1,52 @@
 :root {
-  --bg: #1d2021;
-  --bg2: #282828;
-  --cursor: #32302f;
-  --line: #504945;
-  --text: #ebdbb2;
-  --bright: #fbf1c7;
-  --muted: #a89984;
-  --dim: #665c54;
-  --accent: #fabd2f;
-  --orange: #fe8019;
-  --purple: #d3869b;
-  --green: #b8bb26;
-  --aqua: #8ec07c;
-  --blue: #83a598;
-  --red: #fb4934;
+  --bg: #121212;
+  --raised: #1e1e1e;
+  --press: #2a2a2a;
+  --line: #262626;
+  --text: #e4e4e4;
+  --bright: #ffffff;
+  --muted: #9b9b9b;
+  --dim: #646464;
+  --accent: #f0b429;
+  --purple: #b9a6f2;
+  --green: #5fd38d;
+  --aqua: #8fd3ff;
+  --blue: #6ea8fe;
+  --red: #ff6b6b;
   --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, monospace;
+  --tap: 44px; /* the smallest thing a thumb should have to hit */
   color-scheme: dark;
+}
+
+/* Themes: data-theme on <html>; "auto" follows the phone's light or dark mode. */
+:root[data-theme='light'] {
+  --bg: #f7f7f5; --raised: #ffffff; --press: #ececea; --line: #e2e2df;
+  --text: #2a2a2a; --bright: #000000; --muted: #6b6b6b; --dim: #9a9a9a;
+  --accent: #c98a00; --purple: #7c5cc4; --green: #1f9d55; --aqua: #0b6e99; --blue: #2f6fd6; --red: #d64545;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme='auto'] {
+    --bg: #f7f7f5; --raised: #ffffff; --press: #ececea; --line: #e2e2df;
+    --text: #2a2a2a; --bright: #000000; --muted: #6b6b6b; --dim: #9a9a9a;
+    --accent: #c98a00; --purple: #7c5cc4; --green: #1f9d55; --aqua: #0b6e99; --blue: #2f6fd6; --red: #d64545;
+    color-scheme: light;
+  }
+}
+:root[data-theme='gruvbox'] {
+  --bg: #1d2021; --raised: #282828; --press: #32302f; --line: #3c3836;
+  --text: #ebdbb2; --bright: #fbf1c7; --muted: #a89984; --dim: #7c6f64;
+  --accent: #fabd2f; --purple: #d3869b; --green: #b8bb26; --aqua: #8ec07c; --blue: #83a598; --red: #fb4934;
+}
+:root[data-theme='nord'] {
+  --bg: #2e3440; --raised: #3b4252; --press: #434c5e; --line: #434c5e;
+  --text: #d8dee9; --bright: #eceff4; --muted: #a3acbb; --dim: #6c7891;
+  --accent: #ebcb8b; --purple: #b48ead; --green: #a3be8c; --aqua: #88c0d0; --blue: #81a1c1; --red: #bf616a;
+}
+:root[data-theme='tokyo'] {
+  --bg: #1a1b26; --raised: #24283b; --press: #2f3549; --line: #2f3549;
+  --text: #c0caf5; --bright: #e8edff; --muted: #9aa5ce; --dim: #565f89;
+  --accent: #e0af68; --purple: #bb9af7; --green: #9ece6a; --aqua: #7dcfff; --blue: #7aa2f7; --red: #f7768e;
 }
 
 * { box-sizing: border-box; }
@@ -24,41 +55,19 @@ html, body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.45 var(--mono);
+  font: 1rem/1.5 var(--mono); /* the text size setting sets the root size */
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
 }
 
-button {
+button, input, textarea {
   font: inherit;
   color: inherit;
+}
+
+button {
   background: none;
   border: 0;
   padding: 0;
   cursor: pointer;
 }
-
-/* vim's statusline: a mode block, then segments, right-aligned info */
-.statusline {
-  display: flex;
-  align-items: stretch;
-  background: var(--bg2);
-  color: var(--muted);
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.statusline > * { padding: 2px 8px; }
-.statusline .mode { background: var(--muted); color: var(--bg); font-weight: 700; }
-.statusline .mode.insert { background: var(--blue); }
-.statusline .mode.wait { background: var(--accent); }
-.statusline .seg { background: var(--line); color: var(--bright); }
-.statusline .fill { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-
-/* ── TITLE ───────── note */
-.rule { display: flex; gap: 1ch; white-space: nowrap; overflow: hidden; color: var(--dim); }
-.rule .t { color: var(--bright); font-weight: 700; }
-.rule .line { flex: 1; overflow: hidden; }
-.rule .line::before { content: '────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────'; }
-
-.tilde { color: var(--dim); }

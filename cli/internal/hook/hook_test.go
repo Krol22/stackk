@@ -1,6 +1,12 @@
 package hook
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestStopKinds(t *testing.T) {
 	cases := map[string]string{
@@ -26,5 +32,33 @@ func TestSubagentEvents(t *testing.T) {
 	}
 	if _, _, ok := Parse("claude", []byte(`{"hook_event_name":"Stop","agent_id":"a1"}`)); ok {
 		t.Error("a subagent's own Stop must not end the session's turn")
+	}
+}
+
+func TestOmpSubagentEventsStayOutOfTheSession(t *testing.T) {
+	dir := t.TempDir()
+	main := filepath.Join(dir, "2026-10-05T12-48-39_01a1.jsonl")
+	sub := filepath.Join(strings.TrimSuffix(main, ".jsonl"), "InvestigateReds.jsonl")
+	os.MkdirAll(filepath.Dir(sub), 0o755)
+	os.WriteFile(main, nil, 0o644)
+	os.WriteFile(sub, nil, 0o644)
+	payload := func(event string) []byte {
+		b, _ := json.Marshal(map[string]any{"hook_event_name": event, "session_id": "sub-id", "transcript_path": sub,
+			"tool_name": "bash", "tool_input": map[string]any{"command": "ls"}})
+		return b
+	}
+	if _, _, ok := Parse("omp", payload("Stop")); ok {
+		t.Error("a subagent's Stop must not end the session's turn")
+	}
+	ev, _, ok := Parse("omp", payload("PermissionRequest"))
+	if !ok || ev.Kind != "wait" {
+		t.Fatalf("a subagent asking for permission still needs you: %+v %v", ev, ok)
+	}
+	if ev.SessionPath != "" || ev.AgentSessionID != "" {
+		t.Errorf("the subagent's session replaced the main one: %+v", ev)
+	}
+	b, _ := json.Marshal(map[string]any{"hook_event_name": "Stop", "session_id": "main-id", "transcript_path": main})
+	if ev, _, ok := Parse("omp", b); !ok || ev.SessionPath != main {
+		t.Errorf("the main session's own events are kept: %+v %v", ev, ok)
 	}
 }

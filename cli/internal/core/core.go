@@ -15,6 +15,7 @@ import (
 
 	"github.com/krol22/stackk/cli/internal/hook"
 	"github.com/krol22/stackk/cli/internal/safe"
+	"github.com/krol22/stackk/cli/internal/sessions"
 	"github.com/krol22/stackk/cli/internal/store"
 	"github.com/krol22/stackk/cli/internal/tmux"
 )
@@ -387,7 +388,7 @@ func (a *App) Resume(id string) (store.Task, error) {
 		}
 		ref := t.AgentSessionID
 		if t.Agent == "omp" && t.SessionPath != "" {
-			ref = t.SessionPath
+			ref, _ = sessions.OmpMain(t.SessionPath) // never a subagent's file
 		}
 		if ref == "" {
 			return fmt.Errorf("%s: no conversation id, nothing to resume", t.Name)

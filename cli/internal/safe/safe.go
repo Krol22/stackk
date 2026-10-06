@@ -8,7 +8,12 @@ import "strings"
 
 // Text removes control characters (C0, DEL, C1, which covers ESC and every escape sequence's
 // introducer) and invisible direction overrides. Tabs and newlines become spaces.
-func Text(s string) string {
+func Text(s string) string { return clean(s, false) }
+
+// Block is Text for a multi-line message: it keeps newlines and tabs.
+func Block(s string) string { return clean(s, true) }
+
+func clean(s string, lines bool) string {
 	if s == "" {
 		return s
 	}
@@ -16,8 +21,12 @@ func Text(s string) string {
 	b.Grow(len(s))
 	for _, r := range s {
 		switch {
+		case lines && (r == '\t' || r == '\n'):
+			b.WriteRune(r)
 		case r == '\t' || r == '\n' || r == '\r':
-			b.WriteByte(' ')
+			if !lines {
+				b.WriteByte(' ')
+			}
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
 			// dropped
 		case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069, r == 0x200e, r == 0x200f, r == 0x061c:
