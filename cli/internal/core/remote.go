@@ -2,8 +2,12 @@ package core
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/krol22/stackk/cli/internal/safe"
 	"github.com/krol22/stackk/cli/internal/store"
@@ -76,9 +80,11 @@ func (a *App) Send(id, text string, enter bool) error {
 		return err
 	}
 	text = safe.Text(strings.Join(strings.Fields(text), " "))
-	// One tmux command for all of it, so two replies sent at once can't interleave. "--" keeps a
-	// reply like "-R" from being read as an option; tmux takes an argument ending in ";" as the
-	// end of a command, so trailing semicolons go as key codes.
+	// One reply at a time per task: two sent at once must not interleave.
+	unlock := lockTask(t.ID)
+	defer unlock()
+	// "--" keeps a reply like "-R" from being read as an option; tmux takes an argument ending
+	// in ";" as the end of a command, so trailing semicolons go as key codes.
 	body := strings.TrimRight(text, ";")
 	var cmds [][]string
 	if body != "" {
@@ -87,13 +93,32 @@ func (a *App) Send(id, text string, enter bool) error {
 	for range len(text) - len(body) {
 		cmds = append(cmds, []string{"send-keys", "-t", t.TmuxPane, "-H", "3b"})
 	}
+	if len(cmds) > 0 {
+		if err := a.T.Chain(cmds...); err != nil {
+			return err
+		}
+	}
 	if enter {
-		cmds = append(cmds, []string{"send-keys", "-t", t.TmuxPane, "Enter"})
+		// Enter on its own, a moment later: arriving with the text, Claude Code takes it for
+		// part of a paste (a new line) and the reply sits unsent in its input box.
+		time.Sleep(sendSettle)
+		_, err = a.T.Run("send-keys", "-t", t.TmuxPane, "Enter")
 	}
-	if len(cmds) == 0 {
-		return nil
+	return err
+}
+
+var sendSettle = 150 * time.Millisecond
+
+// lockTask serializes input to one task across stackk processes.
+func lockTask(id string) (unlock func()) {
+	dir := filepath.Join(filepath.Dir(store.DefaultPath()), "locks")
+	os.MkdirAll(dir, 0o700)
+	f, err := os.OpenFile(filepath.Join(dir, id), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return func() {}
 	}
-	return a.T.Chain(cmds...)
+	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	return func() { f.Close() }
 }
 
 // keyNames are the keys Keys accepts besides single letters and digits.
