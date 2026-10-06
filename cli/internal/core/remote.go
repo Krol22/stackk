@@ -42,7 +42,7 @@ func (a *App) liveTask(id string) (store.Task, error) {
 	if err != nil {
 		return t, err
 	}
-	if t.TmuxPane == "" || t.RunState != store.RunLive {
+	if t.TmuxPane == "" || t.RunState == store.RunExited { // starting is fine: it may be asking already
 		return t, fmt.Errorf("%s is not running", t.Name)
 	}
 	return t, nil

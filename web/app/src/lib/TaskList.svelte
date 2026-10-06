@@ -80,6 +80,7 @@
 <header>
   <span class="brand">stackk</span>
   <span class="stackname">{stackName}</span>
+  <a class="new" href="#/new">+ new</a>
   <button class="menu-btn" aria-label="settings" onclick={() => (settings = true)}>⚙</button>
 </header>
 
@@ -142,6 +143,7 @@
   }
   .brand { color: var(--accent); font-weight: 700; }
   .stackname { color: var(--dim); flex: 1; }
+  .new { color: var(--accent); text-decoration: none; padding: 10px 4px; margin: -10px 0; }
   .menu-btn { color: var(--muted); min-height: var(--tap); padding: 0 4px 0 12px; margin: -12px 0; }
   .scrim { position: fixed; inset: 0; z-index: 2; background: rgb(0 0 0 / 0.5); }
   .sheet {
