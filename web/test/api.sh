@@ -49,9 +49,9 @@ check "back" '[ "$(field alpha view)" != paused ]'
 
 step "answers go to the prompt on screen"
 post "/api/tasks/$ID/send" '{"text":"ask"}' >/dev/null; sleep 2
-check "a stale answer is refused" 'post "/api/tasks/$ID/key" "{\"keys\":[\"y\",\"enter\"],\"if_waiting\":1}" | grep -q "moved on"'
-SINCE=$(field alpha phase_since)
-post "/api/tasks/$ID/key" "{\"keys\":[\"y\",\"enter\"],\"if_waiting\":$SINCE}" >/dev/null; sleep 3
+check "a stale answer is refused" 'post "/api/tasks/$ID/key" "{\"keys\":[\"y\",\"enter\"],\"if_waiting\":\"1-00000000\"}" | grep -q "moved on"'
+WID=$(field alpha waiting_id)
+post "/api/tasks/$ID/key" "{\"keys\":[\"y\",\"enter\"],\"if_waiting\":\"$WID\"}" >/dev/null; sleep 3
 check "the current one goes through" '[ "$(field alpha phase)" = idle ]'
 
 step "rename"
@@ -104,8 +104,13 @@ check "it starts in the stack with its first prompt" '[ "$(sk ls -json | python3
 mkdir -p "$S/home/code/fresh"; touch "$S/home/code/fresh/.untrusted"
 FRESH=$(post /api/new "{\"cwd\":\"$S/home/code/fresh\",\"stack\":\"work\"}" | python3 -c "import json,sys; print(json.load(sys.stdin)[\"id\"])"); sleep 3
 check "a new folder: the app sees Claude asking to trust it" 'get "/api/tasks/$FRESH/transcript" | python3 -c "import json,sys; assert json.load(sys.stdin).get(\"asks_trust\")"'
-post "/api/tasks/$FRESH/key" '{"keys":["down","enter"]}' >/dev/null; sleep 3
+post "/api/tasks/$FRESH/key" '{"keys":["down","enter"],"if_trust":true}' >/dev/null; sleep 3
 check "trust (down, enter) lets the session start" '! get "/api/tasks/$FRESH/transcript" | grep -q asks_trust && [ "$(sk ls -json | python3 -c "import json,sys; print([t[\"run_state\"] for t in json.load(sys.stdin) if t[\"id\"]==sys.argv[1]][0])" "$FRESH")" = live ]'
+check "a trust answer once it started is refused" 'post "/api/tasks/$FRESH/key" "{\"keys\":[\"esc\"],\"if_trust\":true}" | grep -q "no longer asks"'
+mkdir -p "$S/home/code/nope"; touch "$S/home/code/nope/.untrusted"
+NOPE=$(post /api/new "{\"cwd\":\"$S/home/code/nope\",\"stack\":\"work\"}" | python3 -c "import json,sys; print(json.load(sys.stdin)[\"id\"])"); sleep 3
+post "/api/tasks/$NOPE/key" '{"keys":["esc"],"if_trust":true}' >/dev/null; sleep 3
+check "no, exit (esc) answers the trust prompt" '[ "$(sk ls -json | python3 -c "import json,sys; print([t[\"run_state\"] for t in json.load(sys.stdin) if t[\"id\"]==sys.argv[1]][0])" "$NOPE")" = exited ]'
 check "and never outside the home folder" 'post /api/new "{\"cwd\":\"/tmp\",\"stack\":\"work\"}" | grep -q "outside your home folder"'
 
 echo

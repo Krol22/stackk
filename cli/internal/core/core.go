@@ -305,7 +305,7 @@ func shellArgs(argv []string) (env []string, command string) {
 }
 
 func (a *App) spawn(t store.Task, argv []string) (pane, window string, err error) {
-	args := []string{"new-window", "-d", "-t", t.Stack + ":", "-n", WindowName(t), "-c", t.Cwd,
+	args := []string{"new-window", "-d", "-t", t.Stack + ":", "-n", tmuxName(WindowName(t)), "-c", t.Cwd,
 		"-e", "STACKK_TASK_ID=" + t.ID, "-e", "STACKK_RUN_ID=" + t.RunID, "-P", "-F", "#{pane_id}\t#{window_id}"}
 	env, command := shellArgs(argv)
 	args = append(args, env...)
@@ -519,8 +519,10 @@ func (a *App) Rename(id, name string) error {
 		t.Name, _, _ = SplitName(name)
 		return nil
 	})
-	a.syncWindowName(id)
-	return err
+	if err != nil {
+		return err
+	}
+	return a.syncWindowName(id)
 }
 
 func (a *App) SetNote(id, note string) error {

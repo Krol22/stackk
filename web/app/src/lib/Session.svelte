@@ -95,7 +95,7 @@
   }
 
   // An answer to the prompt on screen, and to no other: refused if the agent moved on meanwhile.
-  const press = (k: string) => act(() => api.keys(id, [k], task?.phase_since))
+  const press = (k: string) => act(() => api.keys(id, [k], { waiting: task?.waiting_id }))
 
   // hide and rm take the session off the list: back to it once done.
   async function leave(action: 'hide' | 'rm') {
@@ -245,8 +245,8 @@
         <p class="q">Claude asks: do you trust this folder?</p>
         <pre class="cmd">{task?.cwd ?? ''}</pre>
         <div class="row">
-          <button class="choice yes" disabled={busy} onclick={() => act(() => api.keys(id, ['down', 'enter']))}>trust</button>
-          <button class="choice no" disabled={busy} onclick={() => press('esc')}>no, exit</button>
+          <button class="choice yes" disabled={busy} onclick={() => act(() => api.keys(id, ['down', 'enter'], { trust: true }))}>trust</button>
+          <button class="choice no" disabled={busy} onclick={() => act(() => api.keys(id, ['esc'], { trust: true }))}>no, exit</button>
         </div>
       </div>
     {:else if waiting}
@@ -259,7 +259,7 @@
           {/each}
           <div class="keyrow">
             {#each stepKeys as [k, label] (k)}
-              <button class="choice" disabled={busy} onclick={() => act(() => api.keys(id, [k]))}>{label}</button>
+              <button class="choice" disabled={busy} onclick={() => press(k)}>{label}</button>
             {/each}
           </div>
         {:else if question}

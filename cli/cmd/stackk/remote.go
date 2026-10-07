@@ -28,8 +28,9 @@ type taskJSON struct {
 	View           string          `json:"view"`  // stack, running, deferred, exited, paused, hidden
 	Phase          string          `json:"phase"` // idle, working, waiting, unknown, shell
 	WaitingKind    string          `json:"waiting_kind,omitempty"`
-	Waiting        json.RawMessage `json:"waiting,omitempty"` // what it asks: {tool, input} or {questions: [{question, options}]}
-	Agent          string          `json:"agent"`             // claude, omp, "" (a shell)
+	WaitingID      string          `json:"waiting_id,omitempty"` // pass to key -if-waiting
+	Waiting        json.RawMessage `json:"waiting,omitempty"`    // what it asks: {tool, input} or {questions: [{question, options}]}
+	Agent          string          `json:"agent"`                // claude, omp, "" (a shell)
 	Cwd            string          `json:"cwd"`
 	LastMsg        string          `json:"last_msg"`
 	LastTool       string          `json:"last_tool,omitempty"`
@@ -50,7 +51,7 @@ func toJSON(t store.Task, stackNames map[string]string) taskJSON {
 		Phase: t.Phase, WaitingKind: t.WaitingKind, Agent: t.Agent, Cwd: t.Cwd, LastMsg: t.LastMsg, LastTool: t.LastTool,
 		LastToolAt: t.LastToolAt, Note: t.Note, Error: t.Error, PhaseSince: t.PhaseSince, QueuedAt: t.QueuedAt,
 		CreatedAt: t.CreatedAt, RunState: t.RunState, AgentSessionID: t.AgentSessionID, Pane: t.TmuxPane, Window: t.HomeWindow,
-		Waiting: waitingJSON(t)}
+		Waiting: waitingJSON(t), WaitingID: core.WaitingID(t)}
 }
 
 func waitingJSON(t store.Task) json.RawMessage {
@@ -200,14 +201,18 @@ func asksTrust(app *core.App, id string) bool {
 
 func keyCmd(app *core.App, args []string) error {
 	fs := flag.NewFlagSet("key", flag.ExitOnError)
-	since := fs.Int64("if-waiting", 0, "only if the agent still waits on the prompt that began then (phase_since)")
+	waiting := fs.String("if-waiting", "", "only if the agent still waits on that prompt (waiting_id in ls -json)")
+	trust := fs.Bool("if-trust", false, "only if it still asks whether to trust its folder")
 	fs.Parse(args)
 	args = fs.Args()
-	t := taskArg(app, args, "key [-if-waiting time] <task> <key…>   (a letter, a digit or: "+strings.Join(core.KeyNames(), ", ")+")")
+	t := taskArg(app, args, "key [-if-waiting id] [-if-trust] <task> <key…>   (a letter, a digit or: "+strings.Join(core.KeyNames(), ", ")+")")
 	if len(args) < 2 {
 		die(fmt.Errorf("usage: stackk key <task> <key…>"))
 	}
-	return app.Keys(t.ID, args[1:], *since)
+	if *trust && !(t.LastEventAt == 0 && asksTrust(app, t.ID)) {
+		return fmt.Errorf("%s no longer asks to trust its folder", t.Name)
+	}
+	return app.Keys(t.ID, args[1:], *waiting)
 }
 
 // maxUpload bounds what a phone may put on this Mac in one file.
@@ -358,4 +363,27 @@ func renameCmd(app *core.App, args []string) error {
 		return fmt.Errorf("a name can't be empty")
 	}
 	return app.Rename(t.ID, name)
+}
+
+// reconcileCmd brings the stored state in line with tmux once, or every interval with -every.
+// It is the dashboard's job while one runs; -every does it without one (stackk-web), keeping
+// what it saw between rounds so it can tell an agent that went quiet.
+func reconcileCmd(app *core.App, args []string) error {
+	fs := flag.NewFlagSet("reconcile", flag.ExitOnError)
+	every := fs.Duration("every", 0, "repeat at this interval (e.g. 10s) until stopped")
+	fs.Parse(args)
+	r := core.NewReconciler()
+	if *every <= 0 {
+		return r.Run(app)
+	}
+	// Run as long as whoever started it: an orphan would go on acting on tmux after its
+	// owner (stackk-web) is gone.
+	parent := os.Getppid()
+	for os.Getppid() == parent {
+		if err := r.Run(app); err != nil && err != core.ErrBackend {
+			fmt.Fprintln(os.Stderr, "stackk reconcile:", err)
+		}
+		time.Sleep(*every)
+	}
+	return nil
 }

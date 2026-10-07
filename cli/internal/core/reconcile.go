@@ -109,7 +109,9 @@ func (r *Reconciler) Run(a *App) error {
 		var pick *tmux.Pane
 		skip := false
 		for i, p := range byWindow[w] {
-			if known[p.ID] || p.Role != "" || p.UIWindow || p.Command == "stackk" {
+			// A pane tagged with a task is stackk's already: one just spawned is tagged before its
+			// task records the pane, and adopting it then would make a second task of it.
+			if known[p.ID] || p.Task != "" || p.Role != "" || p.UIWindow || p.Command == "stackk" {
 				skip = true
 				break
 			}

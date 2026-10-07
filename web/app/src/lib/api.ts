@@ -20,6 +20,7 @@ export type Task = {
   created_at: number
   run_state: 'starting' | 'live' | 'exited'
   waiting?: Waiting
+  waiting_id?: string // what an answer to the current prompt must carry
 }
 
 // What a waiting agent asks: a permission (tool and command) or questions with options.
@@ -62,9 +63,10 @@ export const api = {
   },
   dirs: (path = '') => call<Dirs>(`/api/dirs?path=${encodeURIComponent(path)}`),
   newTask: (body: { cwd: string; prompt: string; agent: string; stack: string }) => call<{ id: string }>('/api/new', body),
-  // ifWaiting: the prompt the keys answer (the task's phase_since); refused if the agent moved on.
-  keys: (id: string, keys: string[], ifWaiting?: number) =>
-    call(`/api/tasks/${encodeURIComponent(id)}/key`, { keys, if_waiting: ifWaiting ?? 0 }),
+  // guard: the prompt the keys answer (waiting_id), or the folder trust prompt; refused if the
+  // agent moved on meanwhile.
+  keys: (id: string, keys: string[], guard: { waiting?: string; trust?: boolean } = {}) =>
+    call(`/api/tasks/${encodeURIComponent(id)}/key`, { keys, if_waiting: guard.waiting ?? '', if_trust: !!guard.trust }),
   action: (id: string, action: 'pause' | 'resume' | 'hide' | 'unhide' | 'rm') => call(`/api/tasks/${encodeURIComponent(id)}/${action}`, {}),
 }
 

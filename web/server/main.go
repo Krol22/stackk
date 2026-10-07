@@ -19,10 +19,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -32,8 +35,8 @@ import (
 var static embed.FS
 
 var (
-	addr   = flag.String("addr", "127.0.0.1:7878", "listen address; keep it on localhost and publish it with `tailscale serve`")
-	stackk = flag.String("stackk", "", "the stackk binary (default: stackk in PATH, then ~/.local/bin/stackk)")
+	addr    = flag.String("addr", "127.0.0.1:7878", "listen address; keep it on localhost and publish it with `tailscale serve`")
+	stackk  = flag.String("stackk", "", "the stackk binary (default: stackk in PATH, then ~/.local/bin/stackk)")
 	allow   = flag.String("allow", "", "with tailscale serve: the only Tailscale login let in (e.g. you@gmail.com)")
 	devices = flag.String("devices", "", "the only tailnet devices let in, by name or Tailscale IP (e.g. iphone-15); comma-separated")
 )
@@ -53,6 +56,16 @@ func main() {
 		log.Printf("only these devices are let in: %s", *devices)
 	}
 	go s.reconcile()
+	// Take the reconcile process along when stopped.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-stop
+		if p := s.reconciling.Load(); p != nil {
+			p.Kill()
+		}
+		os.Exit(0)
+	}()
 	log.Printf("stackk-web on http://%s (stackk: %s)", *addr, bin)
 	log.Fatal(http.ListenAndServe(*addr, s.routes()))
 }
@@ -73,9 +86,10 @@ func findStackk(given string) (string, error) {
 }
 
 type server struct {
-	bin     string
-	allow   string
-	devices map[string]bool // tailnet IPs; empty: any device
+	reconciling atomic.Pointer[os.Process]
+	bin         string
+	allow       string
+	devices     map[string]bool // tailnet IPs; empty: any device
 }
 
 // resolveDevices turns device names (MagicDNS) or IPs into the set of IPs let in.
@@ -102,12 +116,21 @@ func resolveDevices(list string) (map[string]bool, error) {
 }
 
 // reconcile keeps the stack's state current when no dashboard runs (that is who usually does
-// it): agents that exited, panes that are gone, windows added by hand.
+// it): agents that exited, panes that are gone, windows added by hand, agents gone quiet. One
+// long-running `stackk reconcile -every` remembers screens between rounds; restarted if it dies.
 func (s *server) reconcile() {
-	for range time.Tick(10 * time.Second) {
-		if _, err := s.run(context.Background(), "", "reconcile"); err != nil {
+	for {
+		cmd := exec.Command(s.bin, "reconcile", "-every", "10s")
+		cmd.Stderr = os.Stderr
+		err := cmd.Start()
+		if err == nil {
+			s.reconciling.Store(cmd.Process)
+			err = cmd.Wait()
+		}
+		if err != nil {
 			log.Printf("reconcile: %v", err)
 		}
+		time.Sleep(5 * time.Second)
 	}
 }
 
@@ -243,8 +266,9 @@ func (s *server) run(ctx context.Context, stdin string, args ...string) ([]byte,
 
 // A task id and a key never start with "-", so neither can pass for a CLI flag.
 var (
-	idRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$`)
-	keyRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,15}$`)
+	idRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$`)
+	keyRe     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,15}$`)
+	waitingRe = regexp.MustCompile(`^[0-9]{1,12}-[0-9a-f]{8}$`)
 )
 
 func taskID(w http.ResponseWriter, r *http.Request) (string, bool) {
@@ -330,7 +354,8 @@ func (s *server) key(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Keys      []string `json:"keys"`
-		IfWaiting int64    `json:"if_waiting"` // the prompt the answer is for (task phase_since)
+		IfWaiting string   `json:"if_waiting"` // the prompt the answer is for (task waiting_id)
+		IfTrust   bool     `json:"if_trust"`   // an answer to "do you trust this folder?"
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil || len(body.Keys) == 0 {
 		http.Error(w, "bad JSON: want {\"keys\": [...]}", http.StatusBadRequest)
@@ -343,8 +368,15 @@ func (s *server) key(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	args := []string{"key"}
-	if body.IfWaiting > 0 {
-		args = append(args, "-if-waiting", strconv.FormatInt(body.IfWaiting, 10))
+	if body.IfWaiting != "" {
+		if !waitingRe.MatchString(body.IfWaiting) {
+			http.Error(w, "bad if_waiting", http.StatusBadRequest)
+			return
+		}
+		args = append(args, "-if-waiting", body.IfWaiting)
+	}
+	if body.IfTrust {
+		args = append(args, "-if-trust")
 	}
 	out, err := s.run(r.Context(), "", append(append(args, id), body.Keys...)...)
 	s.reply(w, out, err)

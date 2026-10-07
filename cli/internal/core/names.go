@@ -53,34 +53,49 @@ func WindowName(t store.Task) string {
 // syncWindowName renames the task's home window to match its state.
 // It targets the window that really holds the task's pane (the stored home can be stale for a
 // moment) and never the dashboard's own window.
-func (a *App) syncWindowName(id string) {
+func (a *App) syncWindowName(id string) error {
 	t, err := store.GetTask(a.DB, id)
 	if err != nil || t.RunState == store.RunExited {
-		return
+		return nil
 	}
 	window := t.HomeWindow
 	if t.TmuxPane != "" {
 		if p, err := a.T.Pane(t.TmuxPane); err == nil {
 			if p.UIWindow {
-				return // pulled into the dashboard: reconcile renames its home once it is back
+				return nil // pulled into the dashboard: reconcile renames its home once it is back
 			}
 			window = p.WindowID
 		}
 	}
 	if window == "" {
-		return
+		return nil
 	}
 	if ui, _ := a.T.Run("show-options", "-wqv", "-t", window, "@stackk_ui"); ui == "1" {
-		return
+		return nil
 	}
-	a.setWindowName(window, WindowName(t))
+	return a.setWindowName(window, WindowName(t))
 }
 
 // setWindowName renames a window and remembers the name, so a later difference can only mean
 // the user renamed it by hand.
-func (a *App) setWindowName(window, name string) {
-	a.T.Run("rename-window", "-t", window, "--", name) // "--": a name may start with "-"
-	a.T.Run("set-option", "-w", "-t", window, "@stackk_wname", name)
+func (a *App) setWindowName(window, name string) error {
+	if _, err := a.T.Run("rename-window", "-t", window, "--", tmuxName(name)); err != nil {
+		return err
+	}
+	_, err := a.T.Run("set-option", "-w", "-t", window, "@stackk_wname", tmuxArg(name))
+	return err
+}
+
+// tmuxName passes a window name to tmux as the text it is: tmux expands "#{...}" and "#(...)"
+// in names (a task's name can come from an AI-written session title), so "#" is doubled.
+func tmuxName(name string) string { return tmuxArg(strings.ReplaceAll(name, "#", "##")) }
+
+// tmuxArg keeps an argument whole: tmux reads a trailing ";" as the end of a command.
+func tmuxArg(s string) string {
+	if strings.HasSuffix(s, ";") { // tmux drops one backslash before it: "a\;" stays "a\;"
+		return s[:len(s)-1] + `\;`
+	}
+	return s
 }
 
 // autoName reports names tmux gives a window by itself (the running program), not the user.
