@@ -135,7 +135,7 @@ func main() {
 		}
 		err = app.Remove(taskArg(app, args, "rm <task>").ID)
 	case "reconcile":
-		err = core.NewReconciler().Run(app)
+		err = reconcileCmd(app, args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:

@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -75,14 +76,13 @@ func (a *App) Screen(id string, history int) ([]string, error) {
 // Send types text into a task's terminal, then Enter unless told not to. It is typed as text
 // (control characters dropped), so it can't smuggle in keys or escape sequences.
 func (a *App) Send(id, text string, enter bool) error {
+	// One input at a time per task (replies and keys): they must not interleave.
+	defer lockTask(id)()
 	t, err := a.liveTask(id)
 	if err != nil {
 		return err
 	}
 	text = safe.Text(strings.Join(strings.Fields(text), " "))
-	// One reply at a time per task: two sent at once must not interleave.
-	unlock := lockTask(t.ID)
-	defer unlock()
 	// "--" keeps a reply like "-R" from being read as an option; tmux takes an argument ending
 	// in ";" as the end of a command, so trailing semicolons go as key codes.
 	body := strings.TrimRight(text, ";")
@@ -132,15 +132,28 @@ func KeyNames() []string {
 	return []string{"enter", "esc", "tab", "shift-tab", "space", "backspace", "up", "down", "left", "right", "ctrl-c"}
 }
 
+// WaitingID names the prompt a task waits on (empty when it doesn't): when it began and what it
+// asks. Answers carry it, so one meant for a prompt never lands on the next.
+func WaitingID(t store.Task) string {
+	if t.Phase != store.PhaseWaiting {
+		return ""
+	}
+	what := t.WaitingDetail
+	if what == "" { // a prompt without details (omp, or an older hook): its message
+		what = t.LastMsg
+	}
+	return fmt.Sprintf("%d-%08x", t.PhaseSince, crc32.ChecksumIEEE([]byte(what)))
+}
+
 // Keys presses keys in a task's terminal: named ones (enter, esc, up, ctrl-c, …) or a letter or digit.
-// With waitingSince, only if the agent still waits on the prompt that began then: an answer meant
-// for one permission must not land on the next.
-func (a *App) Keys(id string, keys []string, waitingSince int64) error {
+// With waitingID, only if the agent still waits on that prompt (see WaitingID).
+func (a *App) Keys(id string, keys []string, waitingID string) error {
+	defer lockTask(id)()
 	t, err := a.liveTask(id)
 	if err != nil {
 		return err
 	}
-	if waitingSince != 0 && (t.Phase != store.PhaseWaiting || t.PhaseSince != waitingSince) {
+	if waitingID != "" && WaitingID(t) != waitingID {
 		return fmt.Errorf("%s no longer asks that: it moved on", t.Name)
 	}
 	args := []string{"send-keys", "-t", t.TmuxPane}

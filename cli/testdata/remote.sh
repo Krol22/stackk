@@ -58,6 +58,20 @@ step "new from inside a session: the session's stack, not the default one"
 mkdir -p "$S/work/kid"; TMUX_PANE=$(paneof alpine) STACKK_TASK_ID= sk new -name kid "$S/work/kid" >/dev/null; sleep 2
 check "kid is on the work stack" '[ "$(field kid stack_name)" = work ]'
 
+step "two prompts in a row are told apart"
+hookp() { printf '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"%s"}}' "$1" | TMUX_PANE="$(paneof alpha)" "$S/bin/stackk" mark claude; }
+hookp "rm -rf build"; W1=$(field alpha waiting_id); hookp "git push --force"; W2=$(field alpha waiting_id)
+check "a second permission while waiting gets a new id" '[ -n "$W1" ] && [ -n "$W2" ] && [ "$W1" != "$W2" ]'
+check "an answer for the first is refused" 'sk key -if-waiting "$W1" alpha y 2>&1 | grep -q "moved on"'
+printf '{"hook_event_name":"Stop","last_assistant_message":"ok"}' | TMUX_PANE="$(paneof alpha)" "$S/bin/stackk" mark claude
+
+step "window names are names, not tmux formats"
+sk rename alpine 'x#{session_name}#(true);'; sleep 1
+check "the window shows it exactly" '[ "$(winname "x#{session_name}#(true);")" = "x#{session_name}#(true);" ]'
+sleep 6
+check "and reconcile leaves it be" '[ "$(field "x#{session_name}#(true);" name)" = "x#{session_name}#(true);" ]'
+sk rename "x#{session_name}#(true);" alpine
+
 step "naming a task"
 check "an ambiguous name prefix is refused, listing the matches" 'sk show alp 2>&1 | grep -q "matches 2 tasks"'
 check "an unknown task is refused" 'sk show nope 2>&1 | grep -q "no task"'

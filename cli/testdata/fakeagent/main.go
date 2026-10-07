@@ -57,6 +57,45 @@ func recordTool(id, name string, input map[string]any, isError bool) {
 	record("user", []map[string]any{{"type": "tool_result", "tool_use_id": id, "is_error": isError, "content": "ok"}})
 }
 
+// trustAnswer reads keys one by one, like Claude's menu: a lone Esc is an answer too.
+func trustAnswer() bool {
+	stty := func(args ...string) {
+		c := exec.Command("stty", args...)
+		c.Stdin = os.Stdin
+		c.Run()
+	}
+	stty("-icanon", "-echo", "min", "1")
+	defer stty("icanon", "echo")
+	keys := make(chan byte, 16)
+	go func() {
+		b := make([]byte, 1)
+		for {
+			if n, err := os.Stdin.Read(b); err != nil || n == 0 {
+				close(keys)
+				return
+			}
+			keys <- b[0]
+		}
+	}()
+	down := false
+	for k := range keys {
+		switch k {
+		case '\r', '\n':
+			return down
+		case 0x1b:
+			select {
+			case next := <-keys: // an escape sequence: down is ESC [ B
+				if next == '[' && <-keys == 'B' {
+					down = true
+				}
+			case <-time.After(100 * time.Millisecond):
+				return false // Esc alone
+			}
+		}
+	}
+	return false
+}
+
 func main() {
 	cwd, _ = os.Getwd()
 	args := os.Args[1:]
@@ -71,7 +110,7 @@ func main() {
 	in := bufio.NewScanner(os.Stdin)
 	if _, err := os.Stat(".untrusted"); err == nil { // Claude's folder trust prompt, before any hook
 		fmt.Print("Quick safety check: Is this a project you created or one you trust?\n❯ No, exit\n  Yes, I trust this folder\n")
-		if !in.Scan() || !strings.Contains(in.Text(), "[B") { // down, then enter: yes
+		if !trustAnswer() { // down, then enter: yes; esc or enter alone: no
 			os.Exit(0)
 		}
 		os.Remove(".untrusted")
