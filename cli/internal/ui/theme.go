@@ -146,16 +146,40 @@ func (th Theme) paneStyle() string {
 	return "bg=" + th.Bg
 }
 
+var paneStyleOpts = []string{"window-style", "window-active-style"}
+
+// ownPaneStyles records the pane's own styles before a theme changes them, to put back later.
+func (m *stackModel) ownPaneStyles() {
+	m.paneStyles = map[string]string{}
+	for _, opt := range paneStyleOpts {
+		v, _ := m.app.T.Run("show-options", "-pqv", "-t", m.drawer.UI, opt)
+		m.paneStyles[opt] = v
+	}
+}
+
+// restorePaneStyles puts the pane's own styles back (on quit, or the default theme).
+func (m *stackModel) restorePaneStyles() {
+	for _, opt := range paneStyleOpts {
+		if v := m.paneStyles[opt]; v != "" {
+			m.app.T.Run("set-option", "-p", "-t", m.drawer.UI, opt, v)
+		} else {
+			m.app.T.Run("set-option", "-pu", "-t", m.drawer.UI, opt)
+		}
+	}
+}
+
 // setTheme switches the dashboard's colors, and its pane's background through tmux.
 func (m *stackModel) setTheme(name string) tea.Cmd {
 	m.themeName = name
 	style := applyTheme(name).paneStyle()
 	t, pane := m.app.T, m.drawer.UI
 	return m.run(func() (string, error) {
-		for _, opt := range []string{"window-style", "window-active-style"} {
-			if style == "" {
-				t.Run("set-option", "-pu", "-t", pane, opt)
-			} else if _, err := t.Run("set-option", "-p", "-t", pane, opt, style); err != nil {
+		if style == "" {
+			m.restorePaneStyles()
+			return "", nil
+		}
+		for _, opt := range paneStyleOpts {
+			if _, err := t.Run("set-option", "-p", "-t", pane, opt, style); err != nil {
 				return "", err
 			}
 		}

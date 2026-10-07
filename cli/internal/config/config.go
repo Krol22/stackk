@@ -3,8 +3,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 type Config struct {
@@ -37,30 +39,51 @@ func Load() (Config, error) {
 	return c, json.Unmarshal(data, &c)
 }
 
-// Save writes the settings, keeping keys this version doesn't know.
+// Save writes the settings, keeping keys this version doesn't know exactly as they are. Saves
+// from several stackk processes take turns, and the file is replaced whole, never half-written.
 func Save(c Config) error {
-	all := map[string]any{}
-	if data, err := os.ReadFile(Path()); err == nil {
-		json.Unmarshal(data, &all)
-	}
-	mine, err := json.Marshal(c)
-	if err != nil {
-		return err
-	}
-	var fields map[string]any
-	json.Unmarshal(mine, &fields)
-	for k, v := range fields {
-		all[k] = v
-	}
-	if c.Theme == "" {
-		delete(all, "theme")
-	}
-	data, err := json.MarshalIndent(all, "", "  ")
-	if err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Dir(Path()), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(Path(), append(data, '\n'), 0o644)
+	lock, err := os.OpenFile(Path()+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close() // releases the lock
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	all := map[string]json.RawMessage{}
+	data, err := os.ReadFile(Path())
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(data, &all); err != nil {
+			return fmt.Errorf("%s: %v (fix or remove it)", Path(), err)
+		}
+	case !os.IsNotExist(err):
+		return err
+	}
+	if c.Theme == "" {
+		delete(all, "theme")
+	} else {
+		all["theme"], _ = json.Marshal(c.Theme)
+	}
+	out, err := json.MarshalIndent(all, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(Path()), ".config-*.json")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(append(out, '\n')); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	os.Chmod(tmp.Name(), 0o644)
+	return os.Rename(tmp.Name(), Path())
 }
