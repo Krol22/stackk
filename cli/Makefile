@@ -23,6 +23,7 @@ e2e:
 	STACKK_QUIET_SECS=6 bash testdata/find.sh
 	bash testdata/security.sh
 	bash testdata/remote.sh
+	bash testdata/themes.sh
 
 # Performance budget (tmux calls per minute, hook latency).
 perf:
