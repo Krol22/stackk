@@ -1,0 +1,40 @@
+# Fast checks on every push and pull request: vet, unit tests, both builds, the app's type check.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/app/package-lock.json
+
+      - name: cli
+        working-directory: cli
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: web app
+        working-directory: web/app
+        run: |
+          npm ci
+          npm run check
+          npm run build
+
+      - name: web server
+        working-directory: web/server
+        run: |
+          go vet ./...
+          go build -o /dev/null .

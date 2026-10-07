@@ -2,3 +2,6 @@ bin/
 recordings/
 *.tmp
 .DS_Store
+node_modules/
+web/server/static/app/
+web/server/server
