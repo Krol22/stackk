@@ -50,11 +50,12 @@ type stackModel struct {
 	menu          *menuState
 	edit          *editState
 	form          *formState
-	take          []tmux.Pane // "add windows" list while open
-	themes        bool        // theme picker open
-	themeName     string      // as configured ("" for the default)
-	paused        bool        // paused-sessions modal open
-	find          *findState  // "find session" modal
+	take          []tmux.Pane       // "add windows" list while open
+	themes        bool              // theme picker open
+	themeName     string            // as configured ("" for the default)
+	paneStyles    map[string]string // the pane's own styles before a theme, put back on quit
+	paused        bool              // paused-sessions modal open
+	find          *findState        // "find session" modal
 	hover         string
 	blurred       bool // keyboard focus is in the drawer (tmux focus events)
 	status        string
@@ -105,6 +106,7 @@ func RunStack(app *core.App, stack, uiPane string) error {
 	if err := m.drawer.Ensure(); err != nil {
 		return err
 	}
+	m.ownPaneStyles()
 	m.setTheme(cfg.Theme)
 	go func() {
 		for op := range m.ops {
@@ -252,7 +254,13 @@ func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *stackModel) quit() tea.Cmd {
 	d := m.drawer
+	restored := make(chan struct{})
+	m.ops <- func() { // after any theme change still queued
+		m.restorePaneStyles()
+		close(restored)
+	}
 	return func() tea.Msg {
+		<-restored
 		d.Quit()
 		return doneMsg{quit: true}
 	}

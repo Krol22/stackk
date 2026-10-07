@@ -195,23 +195,38 @@ func (m *stackModel) header(w int) string {
 	if look.Legend {
 		name = sYellow.Bold(true).Render(strings.ToUpper(strings.TrimSpace(fit(m.stackName, 32))))
 	}
-	left := " " + sBright.Render("STACKK") + sDim.Render(" · ") + name + "   " + m.counts()
-	right := ""
-	if p, h := len(m.sorted("paused")), len(m.sorted("hidden")); p+h > 0 {
-		label := fmt.Sprintf("⏸ paused %d", p)
-		if h > 0 {
-			label += fmt.Sprintf(" · hidden %d", h)
+	title := " " + sBright.Render("STACKK") + sDim.Render(" · ") + name
+	buttons := func(compact bool) string {
+		pick := func(full, short string) string {
+			if compact {
+				return short
+			}
+			return full
 		}
-		right = zone.Mark("b:paused", button(label, false)) + " "
+		right := ""
+		if p, h := len(m.sorted("paused")), len(m.sorted("hidden")); p+h > 0 {
+			label := fmt.Sprintf("⏸ paused %d", p)
+			if h > 0 {
+				label += fmt.Sprintf(" · hidden %d", h)
+			}
+			right = zone.Mark("b:paused", button(pick(label, fmt.Sprintf("⏸ %d", p+h)), false)) + " "
+		}
+		return right + zone.Mark("b:theme", button(pick("◑ theme", "◑"), false)) + " " +
+			zone.Mark("b:find", button(pick("⌕ find", "⌕"), false)) + " " + zone.Mark("b:take", button(pick("⇲ add windows", "⇲"), false)) + " " +
+			zone.Mark("b:new", button(pick("+ new", "+"), false)) + " " + zone.Mark("b:next", button("next ▶", true)) + " "
 	}
-	right += zone.Mark("b:theme", button("◑ theme", false)) + " "
-	right += zone.Mark("b:find", button("⌕ find", false)) + " " + zone.Mark("b:take", button("⇲ add windows", false)) + " " + zone.Mark("b:new", button("+ new", false)) + " " +
-		zone.Mark("b:next", button("next ▶", true)) + " "
-	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		return padRight(left, w)
+	// When it doesn't fit, the counts go first (the boxes show them too), then button labels;
+	// the buttons themselves always stay.
+	for _, try := range []struct {
+		left    string
+		compact bool
+	}{{title + "   " + m.counts(), false}, {title, false}, {title, true}, {"", true}} {
+		right := buttons(try.compact)
+		if gap := w - lipgloss.Width(try.left) - lipgloss.Width(right); gap >= 1 {
+			return try.left + strings.Repeat(" ", gap) + right
+		}
 	}
-	return left + strings.Repeat(" ", gap) + right
+	return padRight(buttons(true), w)
 }
 
 func (m *stackModel) viewFull() string {

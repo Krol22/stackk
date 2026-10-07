@@ -91,14 +91,6 @@ func box(title string, titleStyle lipgloss.Style, note string, lines []string, w
 	}
 	inner := w - 2
 	label := titleStyle.Render(title)
-	if look.Title == "center" {
-		head := strings.Repeat(" ", max(0, (inner-lipgloss.Width(label))/2)) + label
-		if note != "" {
-			head = padRight(head, inner-lipgloss.Width(note)-1) + sDim.Render(note) + " "
-		}
-		lines = append([]string{head}, lines...)
-		label, note = "", ""
-	}
 	top := edge(ch.tl, ch.tr, ch.h, label, note, w, border, titleStyle)
 	out := []string{top}
 	for i := 0; i < h-2; i++ {
@@ -126,6 +118,19 @@ var frameChars = map[string]frameSet{
 // edge is a frame's top line: the label (already styled) placed the look's way, the note on the right.
 func edge(left, right, h, label, note string, w int, border, section lipgloss.Style) string {
 	var head string
+	if look.Title == "center" && label != "" { // the title in the middle of the top edge
+		head := " " + label + " "
+		tail := ""
+		if note != "" {
+			tail = " " + sDim.Render(note) + " " + border.Render(h)
+		}
+		room := w - 2 - lipgloss.Width(head) - lipgloss.Width(tail)
+		if room >= 2 {
+			l := (w-2-lipgloss.Width(head))/2 - 0
+			l = min(l, room-1)
+			return border.Render(left+strings.Repeat(h, l)) + head + border.Render(strings.Repeat(h, room-l)) + tail + border.Render(right)
+		}
+	}
 	switch {
 	case label == "":
 	case look.Title == "notch":
