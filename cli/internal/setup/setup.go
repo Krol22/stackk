@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+//go:embed skill.md
+var skill string
+
 //go:embed omp_extension.ts
 var ompExtension string
 
@@ -33,8 +36,23 @@ func Run(self string, out func(string)) error {
 	if err := omp(filepath.Join(home, ".omp", "agent", "extensions", "stackk.ts"), self, out); err != nil {
 		return fmt.Errorf("omp extension: %w", err)
 	}
+	// The skill that lets an agent start stackk sessions: Claude reads ~/.claude/skills, omp ~/.agents/skills.
+	for _, dir := range []string{filepath.Join(home, ".claude", "skills", "stackk"), filepath.Join(home, ".agents", "skills", "stackk")} {
+		if err := InstallSkill(dir); err != nil {
+			return fmt.Errorf("skill: %w", err)
+		}
+		out("skill: " + filepath.Join(dir, "SKILL.md"))
+	}
 	out("restart running Claude / omp sessions (/exit, then claude -c / omp -c) so they report to stackk")
 	return nil
+}
+
+// InstallSkill writes the stackk skill (SKILL.md) into dir.
+func InstallSkill(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(skill), 0o644)
 }
 
 func claude(path, self string, out func(string)) error {

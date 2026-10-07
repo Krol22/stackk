@@ -206,8 +206,25 @@ func logErr(err error) {
 }
 
 // currentStack resolves -stack, else the default stack (created on demand).
+// currentStack is the named stack, or the one this command runs in (an agent starting a
+// session puts it next to its own), or the default.
 func currentStack(app *core.App, name string) (tmux.Session, error) {
 	if name == "" {
+		id := os.Getenv("STACKK_TASK_ID")
+		if pane := os.Getenv("TMUX_PANE"); id == "" && pane != "" { // a window stackk adopted
+			if p, err := app.T.Pane(pane); err == nil {
+				id = p.Task
+			}
+		}
+		if t, err := store.GetTask(app.DB, id); err == nil && t.Stack != "" {
+			if ss, err := app.T.Sessions(); err == nil {
+				for _, s := range ss {
+					if s.ID == t.Stack && s.Stack {
+						return s, nil
+					}
+				}
+			}
+		}
 		name = core.DefaultStack()
 	}
 	return app.EnsureStack(name)

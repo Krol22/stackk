@@ -1,0 +1,41 @@
+# End to end on macOS: the CLI and the dashboard on an isolated tmux server with a fake agent,
+# and the web server driven over HTTP. Several minutes on a macOS runner, so it runs on demand.
+# (perf is left out: its timing budgets need a quiet machine.)
+name: e2e
+
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/app/package-lock.json
+      - name: tmux and fish (the tests run panes in fish, like the user's setup)
+        run: brew install tmux fish
+
+      - name: build the web app (the server embeds it)
+        working-directory: web/app
+        run: npm ci && npm run build
+
+      - name: cli
+        working-directory: cli
+        run: |
+          for s in it lifecycle find security remote; do
+            echo "::group::$s"
+            STACKK_QUIET_SECS=6 bash testdata/$s.sh
+            echo "::endgroup::"
+          done
+
+      - name: web
+        run: bash web/test/api.sh

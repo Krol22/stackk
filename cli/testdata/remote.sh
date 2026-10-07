@@ -54,6 +54,10 @@ UP=$(printf 'PNGDATA' | sk upload alpha '../../a b?.png')
 check "saved under stackk's state, name made safe, private" '[ "$(cat "$UP")" = PNGDATA ] && case "$UP" in "$(dirname "$STACKK_DB")"/uploads/*-a_b_.png) true;; *) false;; esac && [ "$(stat -f %Lp "$UP")" = 600 ]'
 check "a file over the limit is refused, nothing left behind" '! head -c 26214401 /dev/zero | sk upload alpha big.bin 2>/dev/null && ! ls "$(dirname "$UP")" | grep -q big.bin'
 
+step "new from inside a session: the session's stack, not the default one"
+mkdir -p "$S/work/kid"; TMUX_PANE=$(paneof alpine) STACKK_TASK_ID= sk new -name kid "$S/work/kid" >/dev/null; sleep 2
+check "kid is on the work stack" '[ "$(field kid stack_name)" = work ]'
+
 step "naming a task"
 check "an ambiguous name prefix is refused, listing the matches" 'sk show alp 2>&1 | grep -q "matches 2 tasks"'
 check "an unknown task is refused" 'sk show nope 2>&1 | grep -q "no task"'
