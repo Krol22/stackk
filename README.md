@@ -31,7 +31,7 @@ A macOS notification tells you when a session has been waiting a couple of minut
 
 ```sh
 git clone git@github.com:Krol22/stackk.git && cd stackk
-make setup   # builds into ~/.local/bin/stackk and runs `stackk setup`
+make setup   # builds cli/ into ~/.local/bin/stackk and runs `stackk setup`
 ```
 
 `stackk setup` adds stackk's hooks to `~/.claude/settings.json` (it keeps a backup and leaves your other hooks alone) and writes the omp extension to `~/.omp/agent/extensions/stackk.ts`. Sessions that were already running before this don't report anything until you restart them: `/exit`, then `claude -c` / `omp -c`.
@@ -60,7 +60,13 @@ Window names carry the state, both ways: stackk appends ` st` (scheduled) and ` 
 | paused | `⏸` modal | hidden until you bring it back; the agent keeps running |
 | hidden | `⏸` modal | not a task at all (notes, an editor) |
 
-CLI: `stackk ls [-json]`, `stackk log [task]`, `stackk new <folder> [prompt]`, `stackk take`, `stackk find [-ai] <query>`, `stackk attach <session>`, `stackk pause|resume|hide|unhide|rm <task>`, `stackk focus [task]`, `stackk test-notify`.
+### On your phone
+
+`stackk-web` puts your stack on your phone, over Tailscale: what waits for you, the conversation, buttons for permissions and questions, replies and attachments. See [web/README.md](web/README.md).
+
+![stackk mobile](docs/mobile.png)
+
+CLI: `stackk ls [-json]`, `stackk show|send|key <task>`, `stackk log [task]`, `stackk new <folder> [prompt]`, `stackk take`, `stackk find [-ai] <query>`, `stackk attach <session>`, `stackk pause|resume|hide|unhide|rm <task>`, `stackk focus [task]`, `stackk test-notify`.
 
 ## How it works
 
