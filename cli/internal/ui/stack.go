@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/krol22/stackk/cli/internal/config"
 	"github.com/krol22/stackk/cli/internal/core"
 	"github.com/krol22/stackk/cli/internal/store"
 	"github.com/krol22/stackk/cli/internal/tmux"
@@ -50,6 +51,8 @@ type stackModel struct {
 	edit          *editState
 	form          *formState
 	take          []tmux.Pane // "add windows" list while open
+	themes        bool        // theme picker open
+	themeName     string      // as configured ("" for the default)
 	paused        bool        // paused-sessions modal open
 	find          *findState  // "find session" modal
 	hover         string
@@ -72,6 +75,7 @@ type dataMsg struct {
 	backendDown bool
 	full        bool
 	err         error
+	theme       *string // the config's theme, read on full loads
 }
 
 type doneMsg struct {
@@ -95,11 +99,13 @@ func RunStack(app *core.App, stack, uiPane string) error {
 		return err
 	}
 	zone.NewGlobal()
+	cfg, _ := config.Load() // a broken config file must not keep the dashboard from starting
 	m := &stackModel{app: app, drawer: &core.Drawer{A: app, UI: uiPane, Stack: s.ID}, rec: core.NewReconciler(),
 		notes: core.NewNotifier(), stackID: s.ID, stackName: s.Name, ops: make(chan func(), 64)}
 	if err := m.drawer.Ensure(); err != nil {
 		return err
 	}
+	m.setTheme(cfg.Theme)
 	go func() {
 		for op := range m.ops {
 			op()
@@ -138,6 +144,11 @@ func (m *stackModel) load(full bool) tea.Cmd {
 		if d.events, err = store.Events(app.DB, stack, "", 30); err != nil {
 			d.err = err
 			return d
+		}
+		if full {
+			if cfg, err := config.Load(); err == nil {
+				d.theme = &cfg.Theme
+			}
 		}
 		if full { // the stack can be renamed; no need to ask every second
 			if ss, err := app.T.Sessions(); err == nil {
@@ -197,6 +208,9 @@ func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tasks, m.events, m.out = msg.tasks, msg.events, msg.out
 		if msg.name != "" {
 			m.stackName = msg.name
+		}
+		if msg.theme != nil && *msg.theme != m.themeName { // `stackk theme` changed the config
+			return m, m.setTheme(*msg.theme)
 		}
 	case doneMsg:
 		if msg.quit {
@@ -291,7 +305,7 @@ func (m *stackModel) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch k.String() {
 	case "esc":
-		m.menu, m.take, m.paused = nil, nil, false
+		m.menu, m.take, m.paused, m.themes = nil, nil, false, false
 	case "q", "ctrl+c":
 		return m, m.quit()
 	}

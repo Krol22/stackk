@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/krol22/stackk/cli/internal/config"
 	"github.com/krol22/stackk/cli/internal/core"
 	"github.com/krol22/stackk/cli/internal/sessions"
 	"github.com/krol22/stackk/cli/internal/setup"
@@ -41,6 +42,7 @@ const usage = `stackk — a round-robin stack of AI sessions in tmux
   stackk hide|unhide <task>           take a window that is not a task out of the lists
   stackk rm <task>                    close the task's window and remove it for good
   stackk rename <task> <name>         rename a task and its window
+  stackk theme [<name>]               list the color themes, or pick one
   stackk mark <claude|omp>            from agent hooks (payload on stdin)
 
 A task is its id, a unique id prefix or its name.
@@ -57,6 +59,9 @@ func main() {
 		return
 	}
 	switch cmd {
+	case "theme":
+		themeCmd(args)
+		return
 	case "slot":
 		slot(os.Getenv("TMUX_PANE"))
 		return
@@ -422,4 +427,37 @@ func attachCmd(app *core.App, args []string) error {
 		fmt.Println(t.ID)
 	}
 	return err
+}
+
+// themeCmd lists the themes or saves one; running dashboards pick the change up.
+func themeCmd(args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		die(err)
+	}
+	if len(args) == 0 {
+		current := cfg.Theme
+		if current == "" {
+			current = ui.ThemeNames()[0]
+		}
+		for _, n := range ui.ThemeNames() {
+			mark := "  "
+			if n == current {
+				mark = "* "
+			}
+			fmt.Println(mark + n)
+		}
+		return
+	}
+	if !ui.ThemeExists(args[0]) {
+		die(fmt.Errorf("no theme %q; stackk theme lists them", args[0]))
+	}
+	cfg.Theme = args[0]
+	if args[0] == ui.ThemeNames()[0] {
+		cfg.Theme = ""
+	}
+	if err := config.Save(cfg); err != nil {
+		die(err)
+	}
+	fmt.Printf("theme: %s (the dashboard switches within a few seconds)\n", args[0])
 }

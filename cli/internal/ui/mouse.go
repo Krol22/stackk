@@ -34,6 +34,13 @@ func (m *stackModel) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		if m.themes {
+			for _, name := range ThemeNames() {
+				if in("th:"+name, msg) {
+					m.hover = "th:" + name
+				}
+			}
+		}
 		if m.menu != nil {
 			for _, it := range m.menu.items {
 				if in("m:"+it.id, msg) {
@@ -55,7 +62,9 @@ func (m *stackModel) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		// usual (opening another task switches the drawer in place); clicking the background closes.
 		m.blurred = false
 		if m.out != "" {
-			modal := func() bool { return m.menu != nil || m.edit != nil || m.form != nil || m.take != nil || m.paused }
+			modal := func() bool {
+				return m.menu != nil || m.edit != nil || m.form != nil || m.take != nil || m.paused || m.themes
+			}
 			before, out := modal(), m.out
 			model, cmd := m.mouse(msg)
 			if cmd == nil && modal() == before && m.out == out {
@@ -89,6 +98,17 @@ func (m *stackModel) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.take != nil {
 		return m, m.takeClick(msg)
 	}
+	if m.themes {
+		for _, name := range ThemeNames() {
+			if in("th:"+name, msg) {
+				return m, m.pickTheme(name)
+			}
+		}
+		if in("th:close", msg) {
+			m.themes = false
+		}
+		return m, nil
+	}
 	if m.paused {
 		return m, m.pausedClick(msg)
 	}
@@ -103,6 +123,9 @@ func (m *stackModel) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case in("b:find", msg):
 		return m, m.openFind()
+	case in("b:theme", msg):
+		m.themes = true
+		return m, nil
 	case in("b:paused", msg):
 		m.paused = true
 		return m, nil
