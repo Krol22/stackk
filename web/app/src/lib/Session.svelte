@@ -128,8 +128,12 @@
     if (picker) picker.value = ''
   }
 
+  let input: HTMLTextAreaElement | undefined = $state()
+
   function send() {
     if (busy) return
+    // The field itself, not the bound copy: iOS commits a suggested word only after the key.
+    if (input) text = input.value
     const t = text.trim()
     if (!t && !files.length) return
     const paths = files.map((f) => f.path).join(' ')
@@ -142,6 +146,8 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    // While a word is being composed (suggestions, autocorrect) Enter belongs to the keyboard.
+    if (e.isComposing || e.keyCode === 229) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       send()
@@ -297,6 +303,7 @@
         autocapitalize="off"
         spellcheck="false"
         bind:value={text}
+        bind:this={input}
         disabled={asksTrust}
         onkeydown={onKeydown}
         onfocus={refit}
