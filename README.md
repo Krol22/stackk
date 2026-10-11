@@ -9,6 +9,7 @@ You run a handful of Claude Code / [omp](https://github.com/can1357/oh-my-pi) se
 - **STACK**: sessions waiting for you (finished a turn, need a permission or an answer), oldest first
 - **RUNNING**: agents at work, including subagents in the background, so you don't have to look
 - **SCHEDULED**: work you parked on purpose; **paused** and **hidden** sessions stay out of sight until you want them
+- **GARDEN**: a little ASCII garden that grows on its own, just to look at (the history is in `stackk log`)
 
 Click a session and its real terminal slides in on the right. Scrolling, selection and paste work as usual. Click the dashboard to put it away.
 
