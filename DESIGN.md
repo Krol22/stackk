@@ -195,17 +195,18 @@ Kolory: **żółty** = czeka na Ciebie, **szary** = pracuje, **fiolet** = odło�
 │      cisza od 3m, brak Stop (przerwany?)             │ │ z  rich-panel-snooze omp        1d … │
 │                                                      │ │ ○  deferred-tasks   claude      3d … │
 └──────────────────────────────────────────────────────┘ └──────────────────────────────────────┘
-┌─ LOG ─────────────────────────────────────────────────────────────────────────────────────────┐
-│ 21:48:31  ↩  yum-3597               claude  stop                     → stack #3               │
-│ 21:47:10  ?  wa-computer-use-fixes  omp     wait (permission)        → stack #2               │
-│ 21:46:02  →  disclaimer             ty      prompt                   → running                │
-│ 21:45:12  ⁇  godot-diff             reconcile  cisza 60 s            → stack #4               │
+┌─ GARDEN ─────────────────────────────────────────────────────── ✿ 13 in bloom · 76 growing ─┐
+│'   , " .  %♣ ' . ❀ * " ♣   . ' .   % " ,♠  ··················· .   . ' .♠  " " .  ♣' ' .♣  " │
+│   %   * ❀ .   . ♣ " " . ' . ' ' ♣ ·········♣  . ♣ .   "v ·· '❀·········   ,♣"♣♣   ♣ v '   ,  │
+│" "   .  @.   .   "   '   .········   , ♣ ♣ ' .   '   "v" ··'♣♣   .♠  ,♣········' .   .  ♠❀*" │
+│··················  .♣♣ . ♣ .   " " ' ' .♣  .♠"v" ♣ . ' . ··.✿' "   ,   .   ♣ ' .♣  "   "····│
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 - **Znaczniki:** `✓` skończył, `?` czeka na zgodę/odpowiedź, `⁇` nie wiadomo, `○` proces zakończony.
 - **RUNNING** pokazuje ostatnie znane zdarzenie, a nie bieżący postęp.
 - **`…` na końcu wiersza** otwiera to samo menu co prawy klik.
+- **GARDEN** to czysta dekoracja: sam sadzi, kwitnie i więdnie, niezależnie od sesji. Historia zdarzeń jest w `stackk log`.
 
 ### Lewy klik → terminal wysuwa się z lewej
 
