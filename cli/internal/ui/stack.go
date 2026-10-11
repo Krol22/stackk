@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/krol22/stackk/cli/internal/config"
 	"github.com/krol22/stackk/cli/internal/core"
 	"github.com/krol22/stackk/cli/internal/store"
 	"github.com/krol22/stackk/cli/internal/tmux"
@@ -42,16 +43,18 @@ type stackModel struct {
 
 	stackID, stackName string
 	tasks              []store.Task
-	events             []store.EventRow
 	out                string
 
 	width, height int
 	menu          *menuState
 	edit          *editState
 	form          *formState
-	take          []tmux.Pane // "add windows" list while open
-	paused        bool        // paused-sessions modal open
-	find          *findState  // "find session" modal
+	take          []tmux.Pane       // "add windows" list while open
+	themes        bool              // theme picker open
+	themeName     string            // as configured ("" for the default)
+	paneStyles    map[string]string // the pane's own styles before a theme, put back on quit
+	paused        bool              // paused-sessions modal open
+	find          *findState        // "find session" modal
 	hover         string
 	blurred       bool // keyboard focus is in the drawer (tmux focus events)
 	status        string
@@ -62,16 +65,17 @@ type stackModel struct {
 	loadSeq       int  // last load started
 	appliedSeq    int  // newest load (or user action) the view reflects
 	lastFull      time.Time
+	garden        *garden
 }
 
 type dataMsg struct {
 	seq         int
 	tasks       []store.Task
-	events      []store.EventRow
 	out, name   string
 	backendDown bool
 	full        bool
 	err         error
+	theme       *string // the config's theme, read on full loads
 }
 
 type doneMsg struct {
@@ -95,11 +99,14 @@ func RunStack(app *core.App, stack, uiPane string) error {
 		return err
 	}
 	zone.NewGlobal()
+	cfg, _ := config.Load() // a broken config file must not keep the dashboard from starting
 	m := &stackModel{app: app, drawer: &core.Drawer{A: app, UI: uiPane, Stack: s.ID}, rec: core.NewReconciler(),
-		notes: core.NewNotifier(), stackID: s.ID, stackName: s.Name, ops: make(chan func(), 64)}
+		notes: core.NewNotifier(), stackID: s.ID, stackName: s.Name, ops: make(chan func(), 64), garden: newGarden()}
 	if err := m.drawer.Ensure(); err != nil {
 		return err
 	}
+	m.ownPaneStyles()
+	m.setTheme(cfg.Theme)
 	go func() {
 		for op := range m.ops {
 			op()
@@ -135,9 +142,10 @@ func (m *stackModel) load(full bool) tea.Cmd {
 			d.err = err
 			return d
 		}
-		if d.events, err = store.Events(app.DB, stack, "", 30); err != nil {
-			d.err = err
-			return d
+		if full {
+			if cfg, err := config.Load(); err == nil {
+				d.theme = &cfg.Theme
+			}
 		}
 		if full { // the stack can be renamed; no need to ask every second
 			if ss, err := app.T.Sessions(); err == nil {
@@ -169,6 +177,17 @@ func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.gardenShown() && !m.garden.ticking { // each tick re-renders the dashboard: only while it shows
+			m.garden.ticking = true
+			return m, gardenTick()
+		}
+	case gardenTickMsg:
+		if !m.gardenShown() {
+			m.garden.ticking = false
+			return m, nil
+		}
+		m.garden.step()
+		return m, gardenTick()
 	case tickMsg:
 		cmds := []tea.Cmd{tick()}
 		if !m.loading {
@@ -194,9 +213,12 @@ func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // started before newer data or a user action: stale
 		}
 		m.appliedSeq = msg.seq
-		m.tasks, m.events, m.out = msg.tasks, msg.events, msg.out
+		m.tasks, m.out = msg.tasks, msg.out
 		if msg.name != "" {
 			m.stackName = msg.name
+		}
+		if msg.theme != nil && *msg.theme != m.themeName { // `stackk theme` changed the config
+			return m, m.setTheme(*msg.theme)
 		}
 	case doneMsg:
 		if msg.quit {
@@ -238,7 +260,13 @@ func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *stackModel) quit() tea.Cmd {
 	d := m.drawer
+	restored := make(chan struct{})
+	m.ops <- func() { // after any theme change still queued
+		m.restorePaneStyles()
+		close(restored)
+	}
 	return func() tea.Msg {
+		<-restored
 		d.Quit()
 		return doneMsg{quit: true}
 	}
@@ -291,7 +319,7 @@ func (m *stackModel) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch k.String() {
 	case "esc":
-		m.menu, m.take, m.paused = nil, nil, false
+		m.menu, m.take, m.paused, m.themes = nil, nil, false, false
 	case "q", "ctrl+c":
 		return m, m.quit()
 	}

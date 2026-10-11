@@ -60,13 +60,27 @@ Window names carry the state, both ways: stackk appends ` st` (scheduled) and ` 
 | paused | `⏸` modal | hidden until you bring it back; the agent keeps running |
 | hidden | `⏸` modal | not a task at all (notes, an editor) |
 
+### Themes
+
+Click **◑ theme** to pick one, or run `stackk theme` to list them and `stackk theme <name>` to switch. Themes change the look too, not only the colors:
+
+- **agent-tree:** dashed frames in each section's color, titles centered, `[ bracket ]` buttons
+- **neon:** synthwave pink and cyan, double frames, `┤ notched ├` titles
+- **charm:** rounded frames, pill titles
+- **phosphor:** a green CRT, heavy frames
+- **win95:** grey dialogs, navy title bars, bevelled block frames
+- **minimal:** no frames at all
+- palettes: stackk (the default, on your terminal's background), catppuccin-mocha, catppuccin-latte, dracula, gruvbox, nord, rose-pine, solarized-light, tokyo-night
+
+Running dashboards follow within a few seconds. The choice is saved in `~/.config/stackk/config.json`.
+
 ### On your phone
 
 `stackk-web` puts your stack on your phone, over Tailscale: what waits for you, the conversation, buttons for permissions and questions, replies and attachments. See [web/README.md](web/README.md).
 
 ![stackk mobile](docs/mobile.png)
 
-CLI: `stackk ls [-json]`, `stackk show|send|key <task>`, `stackk log [task]`, `stackk new <folder> [prompt]`, `stackk take`, `stackk find [-ai] <query>`, `stackk attach <session>`, `stackk pause|resume|hide|unhide|rm <task>`, `stackk focus [task]`, `stackk test-notify`.
+CLI: `stackk ls [-json]`, `stackk show|send|key <task>`, `stackk log [task]`, `stackk new <folder> [prompt]`, `stackk take`, `stackk find [-ai] <query>`, `stackk attach <session>`, `stackk pause|resume|hide|unhide|rm|rename <task>`, `stackk focus [task]`, `stackk theme [<name>]`, `stackk test-notify`.
 
 ## How it works
 

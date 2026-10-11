@@ -40,7 +40,7 @@ func (m *stackModel) View() string {
 	}
 	var base string
 	switch {
-	case m.width < 100:
+	case m.width < sidebarBelow:
 		base = m.viewSidebar()
 	default:
 		base = m.viewFull()
@@ -62,6 +62,10 @@ func (m *stackModel) View() string {
 		w := min(m.width-2, 90)
 		s = zone.Scan(overlay(s, m.viewPaused(w), max(0, (m.width-w)/2), 2))
 	}
+	if m.themes {
+		w := min(m.width-2, 50)
+		s = zone.Scan(overlay(s, m.viewThemes(w), max(0, (m.width-w)/2), 2))
+	}
 	if m.take != nil {
 		w := min(m.width-2, 90)
 		s = zone.Scan(overlay(s, m.viewTake(w), max(0, (m.width-w)/2), 2))
@@ -74,6 +78,13 @@ func (m *stackModel) View() string {
 }
 
 func (m *stackModel) counts() string {
+	if look.Legend {
+		item := func(st lipgloss.Style, label string, n int) string {
+			return st.Render("■") + " " + sGrey.Render(fmt.Sprintf("%s %d", label, n))
+		}
+		return item(sYellow, "stack", len(m.sorted("stack"))) + "   " + item(sRun, "running", len(m.sorted("running"))) +
+			"   " + item(sPurple, "scheduled", len(m.sorted("deferred")))
+	}
 	return sYellow.Render(fmt.Sprintf("● stack %d", len(m.sorted("stack")))) + "  " +
 		sGrey.Render(fmt.Sprintf("◐ running %d", len(m.sorted("running")))) + "  " +
 		sPurple.Render(fmt.Sprintf("z scheduled %d", len(m.sorted("deferred"))))
@@ -180,36 +191,60 @@ func (m *stackModel) taskRows(t store.Task, view string, pos int, w int) []strin
 }
 
 func (m *stackModel) header(w int) string {
-	left := " " + sBright.Render("STACKK") + sDim.Render(" · ") + sText.Render(fit(m.stackName, 32)) + "   " + m.counts()
-	right := ""
-	if p, h := len(m.sorted("paused")), len(m.sorted("hidden")); p+h > 0 {
-		label := fmt.Sprintf("⏸ paused %d", p)
-		if h > 0 {
-			label += fmt.Sprintf(" · hidden %d", h)
+	name := sText.Render(fit(m.stackName, 32))
+	if look.Legend {
+		name = sYellow.Bold(true).Render(strings.ToUpper(strings.TrimSpace(fit(m.stackName, 32))))
+	}
+	title := " " + sBright.Render("STACKK") + sDim.Render(" · ") + name
+	buttons := func(compact bool) string {
+		pick := func(full, short string) string {
+			if compact {
+				return short
+			}
+			return full
 		}
-		right = zone.Mark("b:paused", button(label, false)) + " "
+		right := ""
+		if p, h := len(m.sorted("paused")), len(m.sorted("hidden")); p+h > 0 {
+			label := fmt.Sprintf("⏸ paused %d", p)
+			if h > 0 {
+				label += fmt.Sprintf(" · hidden %d", h)
+			}
+			right = zone.Mark("b:paused", button(pick(label, fmt.Sprintf("⏸ %d", p+h)), false)) + " "
+		}
+		return right + zone.Mark("b:theme", button(pick("◑ theme", "◑"), false)) + " " +
+			zone.Mark("b:find", button(pick("⌕ find", "⌕"), false)) + " " + zone.Mark("b:take", button(pick("⇲ add windows", "⇲"), false)) + " " +
+			zone.Mark("b:new", button(pick("+ new", "+"), false)) + " " + zone.Mark("b:next", button("next ▶", true)) + " "
 	}
-	right += zone.Mark("b:find", button("⌕ find", false)) + " " + zone.Mark("b:take", button("⇲ add windows", false)) + " " + zone.Mark("b:new", button("+ new", false)) + " " +
-		zone.Mark("b:next", button("next ▶", true)) + " "
-	gap := w - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		return padRight(left, w)
+	// When it doesn't fit, the counts go first (the boxes show them too), then button labels;
+	// the buttons themselves always stay.
+	for _, try := range []struct {
+		left    string
+		compact bool
+	}{{title + "   " + m.counts(), false}, {title, false}, {title, true}, {"", true}} {
+		right := buttons(try.compact)
+		if gap := w - lipgloss.Width(try.left) - lipgloss.Width(right); gap >= 1 {
+			return try.left + strings.Repeat(" ", gap) + right
+		}
 	}
-	return left + strings.Repeat(" ", gap) + right
+	return padRight(buttons(true), w)
 }
+
+const sidebarBelow = 100 // narrower than this the dashboard is a sidebar
+
+func (m *stackModel) gardenShown() bool { return m.width >= sidebarBelow && m.height >= 28 }
 
 func (m *stackModel) viewFull() string {
 	w, h := m.width, m.height
 	const pad, gap = 1, 2 // outer margin and space between columns
 	inner := w - 2*pad
-	logH := 0
-	if h >= 28 {
-		logH = 7
+	gardenH := 0
+	if m.gardenShown() {
+		gardenH = 7
 	}
-	// header, blank, body, [blank, log], status
+	// header, blank, body, [blank, garden], status
 	bodyH := h - 3
-	if logH > 0 {
-		bodyH -= logH + 1
+	if gardenH > 0 {
+		bodyH -= gardenH + 1
 	}
 	lw := inner * 58 / 100
 	rw := inner - lw - gap
@@ -240,7 +275,7 @@ func (m *stackModel) viewFull() string {
 		defH = max(4, min(len(defLines)+3, bodyH/2))
 	}
 	runH := bodyH - defH - 1
-	right := box("RUNNING", sGrey.Bold(true), "do not disturb", runLines, rw, runH) + "\n\n" +
+	right := box("RUNNING", sRun.Bold(true), "do not disturb", runLines, rw, runH) + "\n\n" +
 		box("SCHEDULED", sPurple.Bold(true), "", defLines, rw, defH)
 
 	margin := strings.Repeat(" ", pad)
@@ -252,9 +287,16 @@ func (m *stackModel) viewFull() string {
 		return strings.Join(lines, "\n")
 	}
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
-	parts := []string{m.header(w), "", indent(body)}
-	if logH > 0 {
-		parts = append(parts, "", indent(box("LOG", sGrey.Bold(true), "", m.logLines(inner-2, logH-2), inner, logH)))
+	under := ""
+	if look.Legend { // a dotted rule under the header
+		under = " " + sLine.Render(strings.Repeat("┄", max(0, w-2)))
+	}
+	parts := []string{m.header(w), under, indent(body)}
+	if gardenH > 0 {
+		m.garden.resize(inner-2, gardenH-2)
+		bloom, grow := m.garden.counts()
+		note := fmt.Sprintf("✿ %d in bloom · %d growing", bloom, grow)
+		parts = append(parts, "", indent(box("GARDEN", sGreen.Bold(true), note, m.garden.lines(), inner, gardenH)))
 	}
 	parts = append(parts, m.statusLine(w))
 	return strings.Join(parts, "\n")
@@ -272,34 +314,17 @@ func (m *stackModel) emptyStack(w int) []string {
 	return lines
 }
 
-func (m *stackModel) logLines(w, n int) []string {
-	var out []string
-	for i, e := range m.events {
-		if i == n {
-			break
-		}
-		detail := e.Detail
-		if !e.Applied {
-			detail += " (old run, ignored)"
-		}
-		source := e.Source
-		if source == "ty" { // stored as "ty" (you) since the first version
-			source = "you"
-		}
-		line := " " + sDim.Render(time.Unix(e.TS, 0).Format("15:04:05")) + "  " + eventIcon(e.Event) + "  " +
-			sText.Render(fit(e.TaskName, 24)) + " " + sGrey.Render(fit(source, 10)) + " " +
-			sGrey.Render(fit(e.Event, 11)) + " " + sDim.Render(detail)
-		out = append(out, padRight(line, w))
-	}
-	return out
-}
-
 func (m *stackModel) viewSidebar() string {
 	w, h := m.width, m.height
 	var lines []string
 	lines = append(lines, " "+sBright.Render("STACKK")+sDim.Render(" · ")+sText.Render(m.stackName))
-	lines = append(lines, " "+sYellow.Render(fmt.Sprintf("● %d", len(m.sorted("stack"))))+"  "+
-		sGrey.Render(fmt.Sprintf("◐ %d", len(m.sorted("running"))))+"  "+sPurple.Render(fmt.Sprintf("z %d", len(m.sorted("deferred")))))
+	if look.Legend {
+		sq := func(st lipgloss.Style, n int) string { return st.Render("■") + sGrey.Render(fmt.Sprintf(" %d", n)) }
+		lines = append(lines, " "+sq(sYellow, len(m.sorted("stack")))+"  "+sq(sRun, len(m.sorted("running")))+"  "+sq(sPurple, len(m.sorted("deferred"))))
+	} else {
+		lines = append(lines, " "+sYellow.Render(fmt.Sprintf("● %d", len(m.sorted("stack"))))+"  "+
+			sGrey.Render(fmt.Sprintf("◐ %d", len(m.sorted("running"))))+"  "+sPurple.Render(fmt.Sprintf("z %d", len(m.sorted("deferred")))))
+	}
 	if t, ok := m.byID(m.out); ok {
 		lines = append(lines, "", " "+sGrey.Render("open: ")+sBright.Render(fit(t.Name, w-14)),
 			" "+zone.Mark("b:close", button("close ▶", false))+" "+zone.Mark("b:outmenu", button("…", false)))
@@ -307,7 +332,7 @@ func (m *stackModel) viewSidebar() string {
 	if n := len(m.sorted("paused")) + len(m.sorted("hidden")); n > 0 {
 		lines = append(lines, "", " "+zone.Mark("b:paused", button(fmt.Sprintf("⏸ %d", n), false)))
 	}
-	lines = append(lines, "", " "+zone.Mark("b:find", button("⌕", false))+" "+zone.Mark("b:take", button("⇲", false))+" "+zone.Mark("b:new", button("+", false))+" "+
+	lines = append(lines, "", " "+zone.Mark("b:theme", button("◑", false))+" "+zone.Mark("b:find", button("⌕", false))+" "+zone.Mark("b:take", button("⇲", false))+" "+zone.Mark("b:new", button("+", false))+" "+
 		zone.Mark("b:next", button("next ▶", true)), "")
 	section := func(title string, st lipgloss.Style, view string) {
 		if view != "stack" {
@@ -327,7 +352,7 @@ func (m *stackModel) viewSidebar() string {
 		}
 	}
 	section("STACK", sYellow.Bold(true), "stack")
-	section("RUNNING", sGrey.Bold(true), "running")
+	section("RUNNING", sRun.Bold(true), "running")
 	section("SCHEDULED", sPurple.Bold(true), "deferred")
 
 	if len(lines) > h-1 {
