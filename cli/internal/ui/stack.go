@@ -43,7 +43,6 @@ type stackModel struct {
 
 	stackID, stackName string
 	tasks              []store.Task
-	events             []store.EventRow
 	out                string
 
 	width, height int
@@ -66,12 +65,12 @@ type stackModel struct {
 	loadSeq       int  // last load started
 	appliedSeq    int  // newest load (or user action) the view reflects
 	lastFull      time.Time
+	garden        *garden
 }
 
 type dataMsg struct {
 	seq         int
 	tasks       []store.Task
-	events      []store.EventRow
 	out, name   string
 	backendDown bool
 	full        bool
@@ -102,7 +101,7 @@ func RunStack(app *core.App, stack, uiPane string) error {
 	zone.NewGlobal()
 	cfg, _ := config.Load() // a broken config file must not keep the dashboard from starting
 	m := &stackModel{app: app, drawer: &core.Drawer{A: app, UI: uiPane, Stack: s.ID}, rec: core.NewReconciler(),
-		notes: core.NewNotifier(), stackID: s.ID, stackName: s.Name, ops: make(chan func(), 64)}
+		notes: core.NewNotifier(), stackID: s.ID, stackName: s.Name, ops: make(chan func(), 64), garden: newGarden()}
 	if err := m.drawer.Ensure(); err != nil {
 		return err
 	}
@@ -143,10 +142,6 @@ func (m *stackModel) load(full bool) tea.Cmd {
 			d.err = err
 			return d
 		}
-		if d.events, err = store.Events(app.DB, stack, "", 30); err != nil {
-			d.err = err
-			return d
-		}
 		if full {
 			if cfg, err := config.Load(); err == nil {
 				d.theme = &cfg.Theme
@@ -182,6 +177,17 @@ func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.gardenShown() && !m.garden.ticking { // each tick re-renders the dashboard: only while it shows
+			m.garden.ticking = true
+			return m, gardenTick()
+		}
+	case gardenTickMsg:
+		if !m.gardenShown() {
+			m.garden.ticking = false
+			return m, nil
+		}
+		m.garden.step()
+		return m, gardenTick()
 	case tickMsg:
 		cmds := []tea.Cmd{tick()}
 		if !m.loading {
@@ -207,7 +213,7 @@ func (m *stackModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // started before newer data or a user action: stale
 		}
 		m.appliedSeq = msg.seq
-		m.tasks, m.events, m.out = msg.tasks, msg.events, msg.out
+		m.tasks, m.out = msg.tasks, msg.out
 		if msg.name != "" {
 			m.stackName = msg.name
 		}

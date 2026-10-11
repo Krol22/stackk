@@ -40,7 +40,7 @@ func (m *stackModel) View() string {
 	}
 	var base string
 	switch {
-	case m.width < 100:
+	case m.width < sidebarBelow:
 		base = m.viewSidebar()
 	default:
 		base = m.viewFull()
@@ -229,18 +229,22 @@ func (m *stackModel) header(w int) string {
 	return padRight(buttons(true), w)
 }
 
+const sidebarBelow = 100 // narrower than this the dashboard is a sidebar
+
+func (m *stackModel) gardenShown() bool { return m.width >= sidebarBelow && m.height >= 28 }
+
 func (m *stackModel) viewFull() string {
 	w, h := m.width, m.height
 	const pad, gap = 1, 2 // outer margin and space between columns
 	inner := w - 2*pad
-	logH := 0
-	if h >= 28 {
-		logH = 7
+	gardenH := 0
+	if m.gardenShown() {
+		gardenH = 7
 	}
-	// header, blank, body, [blank, log], status
+	// header, blank, body, [blank, garden], status
 	bodyH := h - 3
-	if logH > 0 {
-		bodyH -= logH + 1
+	if gardenH > 0 {
+		bodyH -= gardenH + 1
 	}
 	lw := inner * 58 / 100
 	rw := inner - lw - gap
@@ -288,8 +292,11 @@ func (m *stackModel) viewFull() string {
 		under = " " + sLine.Render(strings.Repeat("┄", max(0, w-2)))
 	}
 	parts := []string{m.header(w), under, indent(body)}
-	if logH > 0 {
-		parts = append(parts, "", indent(box("LOG", sGrey.Bold(true), "", m.logLines(inner-2, logH-2), inner, logH)))
+	if gardenH > 0 {
+		m.garden.resize(inner-2, gardenH-2)
+		bloom, grow := m.garden.counts()
+		note := fmt.Sprintf("✿ %d in bloom · %d growing", bloom, grow)
+		parts = append(parts, "", indent(box("GARDEN", sGreen.Bold(true), note, m.garden.lines(), inner, gardenH)))
 	}
 	parts = append(parts, m.statusLine(w))
 	return strings.Join(parts, "\n")
@@ -305,28 +312,6 @@ func (m *stackModel) emptyStack(w int) []string {
 		lines = append(lines, center(fmt.Sprintf("working longest: %s (%s)", r[0].Name, ago(r[0].PhaseSince)), sDim))
 	}
 	return lines
-}
-
-func (m *stackModel) logLines(w, n int) []string {
-	var out []string
-	for i, e := range m.events {
-		if i == n {
-			break
-		}
-		detail := e.Detail
-		if !e.Applied {
-			detail += " (old run, ignored)"
-		}
-		source := e.Source
-		if source == "ty" { // stored as "ty" (you) since the first version
-			source = "you"
-		}
-		line := " " + sDim.Render(time.Unix(e.TS, 0).Format("15:04:05")) + "  " + eventIcon(e.Event) + "  " +
-			sText.Render(fit(e.TaskName, 24)) + " " + sGrey.Render(fit(source, 10)) + " " +
-			sGrey.Render(fit(e.Event, 11)) + " " + sDim.Render(detail)
-		out = append(out, padRight(line, w))
-	}
-	return out
 }
 
 func (m *stackModel) viewSidebar() string {

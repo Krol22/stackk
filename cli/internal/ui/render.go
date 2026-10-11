@@ -235,29 +235,3 @@ func overlay(base, top string, x, y int) string {
 	}
 	return strings.Join(bl, "\n")
 }
-
-func eventIcon(ev string) string {
-	switch ev {
-	case "stop":
-		return sYellow.Render("↩")
-	case "wait":
-		return sYellow.Render("?")
-	case "prompt":
-		return sGrey.Render("→")
-	case "unknown":
-		return sYellow.Render("⁇")
-	case "defer":
-		return sPurple.Render("z")
-	case "pause", "hide":
-		return sDim.Render("⏸")
-	case "adopt", "new":
-		return sGreen.Render("+")
-	case "resume":
-		return sGreen.Render("↻")
-	case "end", "kill", "remove":
-		return sDim.Render("○")
-	case "fail":
-		return sRed.Render("!")
-	}
-	return sDim.Render("·")
-}
