@@ -277,7 +277,7 @@
         {:else if question}
           <p class="q">{question.question}</p>
           {#each question.options ?? [] as o, i (i)}
-            <button class="choice" disabled={busy} onclick={() => choose(i, question.options.length)}>
+            <button class="choice" disabled={busy} onclick={() => choose(i, question.options?.length ?? 0)}>
               <b>{o.label}</b>{#if o.description}<span class="d">{o.description}</span>{/if}
             </button>
           {/each}
