@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"github.com/krol22/stackk/cli/internal/agent"
 
 	"hash/fnv"
 	"os"
@@ -200,7 +201,7 @@ func (a *App) reconcileLive(snap store.Task, p tmux.Pane, now int64) {
 			}
 		}
 		// Without hooks an agent never reports SessionStart; a live agent process is enough.
-		if t.RunState == store.RunStarting && now-t.RunStartedAt > 10 && tmux.AgentOf(p.Command) != "" {
+		if t.RunState == store.RunStarting && now-t.RunStartedAt > 10 && agent.Of(p.Command) != "" {
 			before := store.InStack(&t)
 			t.RunState, changed = store.RunLive, true
 			store.Requeue(&t, before, now)

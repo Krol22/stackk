@@ -1,6 +1,7 @@
 package core
 
 import (
+	"github.com/krol22/stackk/cli/internal/agent"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -41,7 +42,7 @@ func readProcs() *procTree {
 // agentIn returns the agent running in the pane: its foreground command, or the closest agent
 // process among the pane process's descendants (two levels: shell → agent).
 func (pt *procTree) agentIn(p tmux.Pane) string {
-	if a := tmux.AgentOf(p.Command); a != "" {
+	if a := agent.Of(p.Command); a != "" {
 		return a
 	}
 	if pt == nil {
@@ -55,7 +56,7 @@ func (pt *procTree) agentIn(p tmux.Pane) string {
 	for depth := 0; depth < 3 && len(level) > 0; depth++ {
 		var next []int
 		for _, pid := range level {
-			if a := tmux.AgentOf(pt.comm[pid]); a != "" {
+			if a := agent.Of(pt.comm[pid]); a != "" {
 				return a
 			}
 			next = append(next, pt.children[pid]...)

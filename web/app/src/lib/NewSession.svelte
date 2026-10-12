@@ -5,7 +5,12 @@
 
   let listing = $state<Dirs | undefined>()
   let cwd = $state('') // picked: the second step
-  let agent = $state<'claude' | 'omp'>((localStorage.getItem('stackk.agent') as 'claude' | 'omp') || 'claude')
+  let agents = $state<string[]>([])
+  let agent = $state(localStorage.getItem('stackk.agent') || '')
+  api.agents().then((a) => {
+    agents = a
+    if (!a.includes(agent)) agent = a[0] ?? ''
+  }, () => {})
   let prompt = $state('')
   let error = $state('')
   let busy = $state(false)
@@ -89,8 +94,9 @@
       <p class="chosen">{short(cwd)}</p>
       <h3 class="flush">agent</h3>
       <div class="seg">
-        <button class:on={agent === 'claude'} onclick={() => (agent = 'claude')}>claude</button>
-        <button class:on={agent === 'omp'} onclick={() => (agent = 'omp')}>omp</button>
+        {#each agents as a (a)}
+          <button class:on={agent === a} onclick={() => (agent = a)}>{a}</button>
+        {/each}
       </div>
       <h3 class="flush">what should it do?</h3>
       <textarea rows="5" placeholder="optional: a first prompt" bind:value={prompt} autocapitalize="sentences"></textarea>

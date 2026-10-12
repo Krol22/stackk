@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"github.com/krol22/stackk/cli/internal/agent"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,7 +11,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/krol22/stackk/cli/internal/store"
-	"github.com/krol22/stackk/cli/internal/tmux"
 	zone "github.com/lrstanley/bubblezone"
 )
 
@@ -98,7 +98,7 @@ func (m *stackModel) viewTake(w int) string {
 		lines = append(lines, " "+sDim.Render("no agent windows outside the stack"))
 	}
 	for _, c := range m.take {
-		agent := tmux.AgentOf(c.Command)
+		agent := agent.Of(c.Command)
 		row := " " + sText.Render(fit(c.SessionName+":"+c.WindowIndex, 12)) + sBright.Render(fit(c.WindowName, 24)) + " " +
 			agentStyle(agent).Render(fit(agent, 7)) + sDim.Render(shortPath(c.Path))
 		st := sText
@@ -131,7 +131,7 @@ func (m *stackModel) recentDirs() []string {
 }
 
 func (m *stackModel) openForm() {
-	f := &formState{agent: "claude"}
+	f := &formState{agent: agent.Names()[0]}
 	for i := range f.inputs {
 		f.inputs[i] = textinput.New()
 		f.inputs[i].Prompt = ""
@@ -171,11 +171,13 @@ func (m *stackModel) formClick(msg tea.MouseMsg) tea.Cmd {
 			return nil
 		}
 	}
+	for _, name := range agent.Names() {
+		if in("f:agent:"+name, msg) {
+			f.agent = name
+			return nil
+		}
+	}
 	switch {
-	case in("f:claude", msg):
-		f.agent = "claude"
-	case in("f:omp", msg):
-		f.agent = "omp"
 	case in("f:ok", msg):
 		return m.submitForm()
 	case in("f:cancel", msg):
@@ -216,11 +218,15 @@ func (m *stackModel) viewForm() string {
 		}
 		return zone.Mark(id, st.Render("( "+mark+" "+label+" )"))
 	}
+	var radios []string
+	for _, name := range agent.Names() {
+		radios = append(radios, radio(name, "f:agent:"+name))
+	}
 	lines := []string{"",
 		field("folder", "f:folder", 0),
 		"          " + strings.Join(chips, " "),
 		field("name", "f:name", 1),
-		" " + sGrey.Render(fit("agent", 8)) + radio("claude", "f:claude") + "  " + radio("omp", "f:omp"),
+		" " + sGrey.Render(fit("agent", 8)) + strings.Join(radios, "  "),
 		field("prompt", "f:prompt", 2),
 		"",
 		" " + sRed.Render(f.err),

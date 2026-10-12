@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/krol22/stackk/cli/internal/agent"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -15,7 +15,6 @@ import (
 
 	"github.com/krol22/stackk/cli/internal/hook"
 	"github.com/krol22/stackk/cli/internal/safe"
-	"github.com/krol22/stackk/cli/internal/sessions"
 	"github.com/krol22/stackk/cli/internal/store"
 	"github.com/krol22/stackk/cli/internal/tmux"
 )
@@ -272,22 +271,12 @@ func (a *App) Candidates() ([]tmux.Pane, error) {
 
 // --- tasks ---
 
-func agentArgv(agent, prompt, resume string) ([]string, error) {
-	bin, err := exec.LookPath(agent)
+func agentArgv(name, prompt, ref string) ([]string, error) {
+	a, err := agent.Get(name)
 	if err != nil {
-		return nil, fmt.Errorf("%s not found in PATH", agent)
+		return nil, err
 	}
-	argv := []string{bin}
-	if resume != "" {
-		argv = append(argv, "--resume", resume)
-	}
-	if prompt != "" {
-		if strings.HasPrefix(prompt, "-") { // a prompt, never an option of the agent's
-			prompt = " " + prompt
-		}
-		argv = append(argv, prompt)
-	}
-	return argv, nil
+	return a.Argv(prompt, ref)
 }
 
 // shellArgs runs argv through the user's shell (its config sets PATH and env) with exec, so the
@@ -389,10 +378,11 @@ func (a *App) Resume(id string) (store.Task, error) {
 		if t.RunState != store.RunExited {
 			return fmt.Errorf("%s is already running", t.Name)
 		}
-		ref := t.AgentSessionID
-		if t.Agent == "omp" && t.SessionPath != "" {
-			ref, _ = sessions.OmpMain(t.SessionPath) // never a subagent's file
+		a, err := agent.Get(t.Agent)
+		if err != nil {
+			return err
 		}
+		ref := a.ResumeRef(t.AgentSessionID, t.SessionPath)
 		if ref == "" {
 			return fmt.Errorf("%s: no conversation id, nothing to resume", t.Name)
 		}

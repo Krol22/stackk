@@ -95,12 +95,9 @@
   }
 
   // An answer to the prompt on screen, and to no other: refused if the agent moved on meanwhile.
-  const press = (k: string) => act(() => api.keys(id, [k], { waiting: task?.waiting_id }))
-  // Claude picks option n with the digit n. omp's ask takes no digits and starts on the recommended
-  // option: go to the top (the list doesn't wrap), then down to the option.
-  const optionKeys = (i: number, n: number) =>
-    task?.agent === 'omp' ? [...Array(n + 1).fill('up'), ...Array(i).fill('down'), 'enter'] : [String(i + 1)]
-  const choose = (i: number, n: number) => act(() => api.keys(id, optionKeys(i, n), { waiting: task?.waiting_id }))
+  // The keys come from the agent (task.answers); one it doesn't offer has no button.
+  const answer = (keys?: string[]) => keys?.length && act(() => api.keys(id, keys, { waiting: task?.waiting_id }))
+  let keys = $derived(task?.answers ?? {})
 
   // hide and rm take the session off the list: back to it once done.
   async function leave(action: 'hide' | 'rm') {
@@ -144,11 +141,9 @@
     const paths = files.map((f) => f.path).join(' ')
     const msg = files.length ? `${t || 'See the attached files.'} (attached: ${paths})` : t
     act(async () => {
-      if (question && !stepping) {
-        // Your own answer: the option after the listed ones (Claude's "Type something", omp's
-        // "Other") takes the text.
-        const n = question.options?.length ?? 0
-        await api.keys(id, optionKeys(n, n), { waiting: task?.waiting_id })
+      if (ownAnswer && keys.own) {
+        // Your own answer: pick the agent's "type something" entry, then the text goes into it.
+        await api.keys(id, keys.own, { waiting: task?.waiting_id })
         await new Promise((r) => setTimeout(r, 300))
       }
       await api.send(id, msg)
@@ -187,7 +182,8 @@
   // Several questions, or several answers to one: the prompt steps through them, so offer the
   // keys it takes rather than buttons that would only fit its first screen.
   let stepping = $derived((ask?.questions?.length ?? 0) > 1 || !!question?.multiSelect)
-  const stepKeys: [string, string][] = [['up', '↑'], ['down', '↓'], ['space', 'select'], ['tab', 'next'], ['enter', 'submit'], ['esc', 'cancel']]
+  const stepLabel: Record<string, string> = { up: '↑', down: '↓', space: 'select', tab: 'next', enter: 'submit', esc: 'cancel' }
+  let ownAnswer = $derived(!!question && !stepping && !!keys.own)
   let paused = $derived(task?.view === 'paused' || task?.run_state === 'exited')
 </script>
 
@@ -259,11 +255,11 @@
 
     {#if asksTrust}
       <div class="ask">
-        <p class="q">Claude asks: do you trust this folder?</p>
+        <p class="q">{task?.agent} asks: do you trust this folder?</p>
         <pre class="cmd">{task?.cwd ?? ''}</pre>
         <div class="row">
-          <button class="choice yes" disabled={busy} onclick={() => act(() => api.keys(id, ['down', 'enter'], { trust: true }))}>trust</button>
-          <button class="choice no" disabled={busy} onclick={() => act(() => api.keys(id, ['esc'], { trust: true }))}>no, exit</button>
+          {#if keys.trust}<button class="choice yes" disabled={busy} onclick={() => act(() => api.keys(id, keys.trust!, { trust: true }))}>trust</button>{/if}
+          {#if keys.exit}<button class="choice no" disabled={busy} onclick={() => act(() => api.keys(id, keys.exit!, { trust: true }))}>no, exit</button>{/if}
         </div>
       </div>
     {:else if waiting}
@@ -275,26 +271,30 @@
             <p class="opts">{(q.options ?? []).map((o, i) => `${i + 1} ${o.label}`).join(' · ')}</p>
           {/each}
           <div class="keyrow">
-            {#each stepKeys as [k, label] (k)}
-              <button class="choice" disabled={busy} onclick={() => press(k)}>{label}</button>
+            {#each keys.steps ?? [] as k (k)}
+              <button class="choice" disabled={busy} onclick={() => answer([k])}>{stepLabel[k] ?? k}</button>
             {/each}
           </div>
         {:else if question}
           <p class="q">{question.question}</p>
           {#each question.options ?? [] as o, i (i)}
-            <button class="choice" disabled={busy} onclick={() => choose(i, question.options?.length ?? 0)}>
-              <b>{o.label}</b>{#if o.description}<span class="d">{o.description}</span>{/if}
-            </button>
+            {#if keys.options?.[i]}
+              <button class="choice" disabled={busy} onclick={() => answer(keys.options?.[i])}>
+                <b>{o.label}</b>{#if o.description}<span class="d">{o.description}</span>{/if}
+              </button>
+            {:else}
+              <p class="opts">{i + 1}. {o.label}</p>
+            {/if}
           {/each}
-          <button class="choice ghost" disabled={busy} onclick={() => input?.focus()}>type your own answer…</button>
-          <button class="choice ghost" disabled={busy} onclick={() => press('esc')}>cancel</button>
+          {#if ownAnswer}<button class="choice ghost" disabled={busy} onclick={() => input?.focus()}>type your own answer…</button>{/if}
+          {#if keys.cancel}<button class="choice ghost" disabled={busy} onclick={() => answer(keys.cancel)}>cancel</button>{/if}
         {:else if ask?.tool}
           <p class="q">{ask.tool}</p>
           {#if ask.input}<pre class="cmd">{ask.input}</pre>{/if}
           <div class="row">
-            <button class="choice yes" disabled={busy} onclick={() => press('1')}>yes</button>
-            <button class="choice" disabled={busy} onclick={() => press('2')}>always</button>
-            <button class="choice no" disabled={busy} onclick={() => press('esc')}>no</button>
+            {#if keys.yes}<button class="choice yes" disabled={busy} onclick={() => answer(keys.yes)}>yes</button>{/if}
+            {#if keys.always}<button class="choice" disabled={busy} onclick={() => answer(keys.always)}>always</button>{/if}
+            {#if keys.no}<button class="choice no" disabled={busy} onclick={() => answer(keys.no)}>no</button>{/if}
           </div>
         {:else}
           <p class="q">{task?.last_msg || 'waiting for you'}</p>
@@ -316,7 +316,7 @@
       <button type="button" class="clip" aria-label="attach" disabled={busy} onclick={() => picker?.click()}>+</button>
       <textarea
         rows="1"
-        placeholder={question && !stepping ? 'your own answer…' : 'reply…'}
+        placeholder={ownAnswer ? 'your own answer…' : 'reply…'}
         enterkeyhint="send"
         autocapitalize="off"
         spellcheck="false"

@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/krol22/stackk/cli/internal/agent"
 	"hash/crc32"
 	"os"
 	"path/filepath"
@@ -170,8 +171,8 @@ func (a *App) Keys(id string, keys []string, waitingID string) error {
 	if _, err = a.T.Run(args...); err != nil {
 		return err
 	}
-	// Claude reports nothing when its prompt is cancelled: it is back at its input, waiting for you.
-	if waitingID != "" && t.Agent == "claude" && len(keys) == 1 && strings.EqualFold(keys[0], "esc") {
+	// An agent that reports nothing when its prompt is cancelled is back at its input, waiting for you.
+	if ag, err := agent.Get(t.Agent); err == nil && !ag.CancelReported() && waitingID != "" && len(keys) == 1 && strings.EqualFold(keys[0], "esc") {
 		return a.SetPhase(id, store.PhaseIdle)
 	}
 	return nil

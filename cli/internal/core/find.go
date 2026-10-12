@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/krol22/stackk/cli/internal/agent"
 	"os"
 	"strings"
 	"time"
@@ -21,7 +22,7 @@ const (
 // SessionIndex returns past Claude/omp sessions, parsing only files that changed since last time.
 func (a *App) SessionIndex() []sessions.Session {
 	var out []sessions.Session
-	for _, f := range sessions.Files(indexAge, indexLimit) {
+	for _, f := range agent.Files(indexAge, indexLimit) {
 		mod, size := f.Mod.UnixNano(), f.Size
 		if data, ok := store.CachedSession(a.DB, f.Path, mod, size); ok {
 			var s sessions.Session
@@ -30,7 +31,7 @@ func (a *App) SessionIndex() []sessions.Session {
 				continue
 			}
 		}
-		s, ok := sessions.Parse(f)
+		s, ok := agent.Parse(f)
 		if !ok {
 			continue
 		}

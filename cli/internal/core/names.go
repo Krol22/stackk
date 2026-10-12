@@ -1,10 +1,10 @@
 package core
 
 import (
+	"github.com/krol22/stackk/cli/internal/agent"
 	"strings"
 
 	"github.com/krol22/stackk/cli/internal/store"
-	"github.com/krol22/stackk/cli/internal/tmux"
 )
 
 // Window name suffixes mirror a task's list: "name st" = scheduled, "name p" = paused,
@@ -101,5 +101,5 @@ func tmuxArg(s string) string {
 // autoName reports names tmux gives a window by itself (the running program), not the user.
 func autoName(name string) bool {
 	base, _, _ := SplitName(name)
-	return base == "" || tmux.AgentOf(base) != "" || base == "fish" || base == "bash" || base == "zsh" || base == "sh"
+	return base == "" || agent.Of(base) != "" || base == "fish" || base == "bash" || base == "zsh" || base == "sh"
 }

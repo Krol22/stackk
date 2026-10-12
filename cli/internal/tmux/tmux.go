@@ -168,31 +168,3 @@ func (c Client) SetPaneOpt(pane, name, value string) error {
 	_, err := c.Run("set-option", "-p", "-t", pane, name, value)
 	return err
 }
-
-// AgentOf reports which agent a pane's foreground process is, by its command name.
-func AgentOf(command string) string {
-	if command == "omp" {
-		return "omp"
-	}
-	if command == "claude" || isVersion(command) {
-		return "claude"
-	}
-	return ""
-}
-
-// Claude Code sets its process title to its version, e.g. "2.1.286".
-func isVersion(s string) bool {
-	dots := 0
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r == '.':
-			dots++
-		case r < '0' || r > '9':
-			return false
-		}
-	}
-	return dots == 2
-}
