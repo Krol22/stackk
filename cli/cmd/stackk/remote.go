@@ -52,10 +52,17 @@ type taskJSON struct {
 
 func toJSON(t store.Task, stackNames map[string]string) taskJSON {
 	return taskJSON{ID: t.ID, Name: t.Name, Stack: t.Stack, StackName: stackNames[t.Stack], View: store.View(t),
-		Phase: t.Phase, WaitingKind: t.WaitingKind, Agent: t.Agent, Cwd: t.Cwd, LastMsg: t.LastMsg, LastTool: t.LastTool,
+		Phase: t.Phase, WaitingKind: waitingKind(t), Agent: t.Agent, Cwd: t.Cwd, LastMsg: t.LastMsg, LastTool: t.LastTool,
 		LastToolAt: t.LastToolAt, Note: t.Note, Error: t.Error, PhaseSince: t.PhaseSince, QueuedAt: t.QueuedAt, Priority: t.Priority,
 		CreatedAt: t.CreatedAt, RunState: t.RunState, AgentSessionID: t.AgentSessionID, Pane: t.TmuxPane, Window: t.HomeWindow,
 		Waiting: waitingJSON(t), WaitingID: core.WaitingID(t), Answers: answers(t)}
+}
+
+func waitingKind(t store.Task) string {
+	if t.Phase != store.PhaseWaiting && store.PendingQuestion(t) != nil {
+		return "question"
+	}
+	return t.WaitingKind
 }
 
 func answers(t store.Task) *agent.Answers {
@@ -76,8 +83,13 @@ func answers(t store.Task) *agent.Answers {
 	return &a
 }
 
+// waitingJSON is what the task waits on you for: its prompt, else a question it posted apart
+// from the turn (one at a time, in order).
 func waitingJSON(t store.Task) json.RawMessage {
-	if t.Phase != store.PhaseWaiting || !json.Valid([]byte(t.WaitingDetail)) {
+	if t.Phase != store.PhaseWaiting {
+		return store.PendingQuestion(t)
+	}
+	if !json.Valid([]byte(t.WaitingDetail)) {
 		return nil
 	}
 	return json.RawMessage(t.WaitingDetail)

@@ -141,6 +141,9 @@ func KeyNames() []string {
 // asks. Answers carry it, so one meant for a prompt never lands on the next.
 func WaitingID(t store.Task) string {
 	if t.Phase != store.PhaseWaiting {
+		if q := store.PendingQuestion(t); q != nil { // a question apart from the turn
+			return fmt.Sprintf("0-%08x", crc32.ChecksumIEEE(q))
+		}
 		return ""
 	}
 	what := t.WaitingDetail
@@ -179,6 +182,11 @@ func (a *App) Keys(id string, keys []string, waitingID string) error {
 	for i, run := range runs {
 		if i > 0 {
 			time.Sleep(300 * time.Millisecond)
+			// The prompt may have moved on during the pause: the rest is for that one only.
+			cur, err := a.liveTask(id)
+			if err != nil || cur.RunID != t.RunID || cur.TmuxPane != t.TmuxPane || (waitingID != "" && WaitingID(cur) != waitingID) {
+				return fmt.Errorf("%s no longer asks that: it moved on", t.Name)
+			}
 		}
 		if len(run) == 3 {
 			continue

@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   archived_at         INTEGER NOT NULL DEFAULT 0,
   paused_at           INTEGER NOT NULL DEFAULT 0,
   hidden_at           INTEGER NOT NULL DEFAULT 0,
+  pending_ask         TEXT NOT NULL DEFAULT '',
   priority            INTEGER NOT NULL DEFAULT 0,
   created_at          INTEGER NOT NULL,
   UNIQUE (agent, agent_session_id)
@@ -70,6 +71,7 @@ type Task struct {
 	Deferred, Priority                                       bool // priority: first on the stack
 	Phase, WaitingKind, WaitingToolUseID                     string
 	WaitingDetail                                            string // JSON: what the agent asks (tool and command, or questions and options)
+	PendingAsk                                               string // JSON: questions posted without blocking the turn (Codex), until answered
 	PhaseSince, QueuedAt                                     int64
 	LastMsg, LastTool                                        string
 	LastToolAt, LastEventAt                                  int64
@@ -130,7 +132,7 @@ func Open(path string) (*DB, error) {
 
 // schemaVersion is bumped with every schema change. Open runs the schema only when the stored
 // version is older, so the common path (a hook opening the DB) costs one PRAGMA read.
-const schemaVersion = 5
+const schemaVersion = 6
 
 // Columns added after the first release, for databases created before them.
 var addedColumns = []string{
@@ -138,6 +140,7 @@ var addedColumns = []string{
 	`ALTER TABLE tasks ADD COLUMN hidden_at INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE tasks ADD COLUMN waiting_detail TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE tasks ADD COLUMN pending_ask TEXT NOT NULL DEFAULT ''`,
 }
 
 func migrate(db *sql.DB) error {
@@ -165,13 +168,13 @@ func migrate(db *sql.DB) error {
 var taskFields = []string{"name", "cwd", "agent", "agent_session_id", "session_path", "stack", "deferred",
 	"phase", "waiting_kind", "waiting_tool_use_id", "phase_since", "queued_at", "last_msg", "last_tool", "last_tool_at",
 	"last_event_at", "run_id", "run_state", "run_started_at", "tmux_pane", "home_window", "error", "note", "archived_at",
-	"paused_at", "hidden_at", "waiting_detail", "priority"}
+	"paused_at", "hidden_at", "waiting_detail", "priority", "pending_ask"}
 
 func taskArgs(t Task) []any {
 	return []any{t.Name, t.Cwd, t.Agent, t.AgentSessionID, t.SessionPath, t.Stack, b2i(t.Deferred),
 		t.Phase, t.WaitingKind, t.WaitingToolUseID, t.PhaseSince, t.QueuedAt, t.LastMsg, t.LastTool, t.LastToolAt,
 		t.LastEventAt, t.RunID, t.RunState, t.RunStartedAt, t.TmuxPane, t.HomeWindow, t.Error, t.Note, t.ArchivedAt,
-		t.PausedAt, t.HiddenAt, t.WaitingDetail, b2i(t.Priority)}
+		t.PausedAt, t.HiddenAt, t.WaitingDetail, b2i(t.Priority), t.PendingAsk}
 }
 
 func placeholder(col string) string {
@@ -208,7 +211,7 @@ func scanTask(s scanner) (Task, error) {
 	err := s.Scan(&t.ID, &t.CreatedAt, &t.Name, &t.Cwd, &t.Agent, &t.AgentSessionID, &t.SessionPath, &t.Stack, &deferred,
 		&t.Phase, &t.WaitingKind, &t.WaitingToolUseID, &t.PhaseSince, &t.QueuedAt, &t.LastMsg, &t.LastTool, &t.LastToolAt,
 		&t.LastEventAt, &t.RunID, &t.RunState, &t.RunStartedAt, &t.TmuxPane, &t.HomeWindow, &t.Error, &t.Note, &t.ArchivedAt,
-		&t.PausedAt, &t.HiddenAt, &t.WaitingDetail, &priority)
+		&t.PausedAt, &t.HiddenAt, &t.WaitingDetail, &priority, &t.PendingAsk)
 	t.Deferred, t.Priority = deferred != 0, priority != 0
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, ErrNotFound

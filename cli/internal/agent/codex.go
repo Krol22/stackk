@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/krol22/stackk/cli/internal/sessions"
+	"github.com/krol22/stackk/cli/internal/store"
 )
 
 // codex is OpenAI's Codex CLI: hooks in ~/.codex/hooks.json report in the shape of Claude's,
@@ -50,8 +51,27 @@ func (c codex) Argv(prompt, ref string) ([]string, error) {
 	return argv, nil
 }
 
+// SessionFiles keeps interactive sessions only, before they count against find's limit:
+// `codex exec` runs and subagents outnumber them.
 func (c codex) SessionFiles(cutoff time.Time) []sessions.File {
-	return sessions.Glob(c.name, filepath.Join(codexDir(), "*", "*", "*", "*.jsonl"), cutoff)
+	var out []sessions.File
+	for _, f := range sessions.Glob(c.name, filepath.Join(codexDir(), "*", "*", "*", "*.jsonl"), cutoff) {
+		if codexInteractive(f.Path) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// codexInteractive reads a rollout's first record, its session_meta.
+func codexInteractive(path string) bool {
+	fh, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer fh.Close()
+	var l codexLine
+	return json.NewDecoder(fh).Decode(&l) == nil && l.Type == "session_meta" && string(l.Payload.Source) == `"cli"`
 }
 
 // line is one rollout record: what stackk reads of it.
@@ -182,10 +202,42 @@ func (b codex) Question(tool string, input json.RawMessage) (json.RawMessage, bo
 	return raw, tool == "request_user_input_async", true
 }
 
+// Answered: Codex hands an answer back as a prompt,
+// <send_user_message_question_reply>[{"answer", "question", "questionItemId": "[tool, call, i]"}]…
+func (codex) Answered(prompt string) ([]string, string) {
+	if !strings.HasPrefix(prompt, "<send_user_message_question_reply>") {
+		return nil, ""
+	}
+	start, end := strings.Index(prompt, "["), strings.LastIndex(prompt, "]")
+	if start < 0 || end < start {
+		return nil, ""
+	}
+	var replies []struct {
+		Answer string `json:"answer"`
+		ItemID string `json:"questionItemId"`
+	}
+	if json.Unmarshal([]byte(prompt[start:end+1]), &replies) != nil {
+		return nil, ""
+	}
+	var keys, answers []string
+	for _, r := range replies {
+		var id []any // ["request_user_input_async", "call_…", 0]
+		if json.Unmarshal([]byte(r.ItemID), &id) != nil || len(id) != 3 {
+			continue
+		}
+		call, _ := id[1].(string)
+		i, _ := id[2].(float64)
+		keys = append(keys, store.AskKey(call, int(i)))
+		answers = append(answers, r.Answer)
+	}
+	return keys, strings.Join(answers, ", ")
+}
+
 func (codex) AsksTrust(screen string) bool { return strings.Contains(screen, "Trust this folder?") }
 
-// Answers: the question waits behind ⌥↑ while the main prompt keeps the keyboard; once it opens
-// the digit n picks option n, and the one after the options ("Other") takes your text. A
+// Answers: questions wait behind ⌥↑ while the main prompt keeps the keyboard. ⌥↓ first (back to
+// the main prompt if the panel is open, harmless there), ⌥↑ opens the first unanswered one; the
+// digit n then picks option n, and the one after the options ("Other") takes your text. A
 // permission is y, p (don't ask again) or Esc; the trust prompt starts on "Trust and continue".
 func (codex) Answers(n int) Answers {
 	a := Answers{
@@ -193,10 +245,10 @@ func (codex) Answers(n int) Answers {
 		Trust: []string{"enter"}, Exit: []string{"esc"},
 	}
 	for i := range n {
-		a.Options = append(a.Options, []string{"alt-up", "wait", fmt.Sprint(i + 1)})
+		a.Options = append(a.Options, []string{"alt-down", "wait", "alt-up", "wait", fmt.Sprint(i + 1)})
 	}
 	if n > 0 {
-		a.Own = []string{"alt-up", "wait", fmt.Sprint(n + 1)}
+		a.Own = []string{"alt-down", "wait", "alt-up", "wait", fmt.Sprint(n + 1)}
 	}
 	return a
 }

@@ -42,6 +42,9 @@ type Agent interface {
 	// ({questions: [{question, options: [{label}]}]}); async when the call returns at once and
 	// the answer comes later, as a prompt.
 	Question(tool string, input json.RawMessage) (questions json.RawMessage, async, ok bool)
+	// Answered reads a prompt that answers questions posted earlier (an async Question): their
+	// keys (store.AskKey) and the answer, for the log.
+	Answered(prompt string) (keys []string, answer string)
 	// AsksTrust reports the agent's "do you trust this folder?" on its screen.
 	AsksTrust(screen string) bool
 	// Answers are the keys that answer its prompts; a question has n options.
@@ -151,6 +154,7 @@ func (base) LastText(string) string                              { return "" }
 func (base) Question(tool string, input json.RawMessage) (json.RawMessage, bool, bool) {
 	return input, false, tool == "AskUserQuestion"
 }
-func (base) AsksTrust(string) bool { return false }
-func (base) Answers(int) Answers   { return Answers{} }
-func (base) CancelReported() bool  { return true }
+func (base) Answered(string) ([]string, string) { return nil, "" }
+func (base) AsksTrust(string) bool              { return false }
+func (base) Answers(int) Answers                { return Answers{} }
+func (base) CancelReported() bool               { return true }

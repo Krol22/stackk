@@ -176,7 +176,8 @@
   const toolMark = (m: Message) => (m.error ? '✗' : m.done ? '✓' : '…')
 
 
-  let waiting = $derived(task?.phase === 'waiting')
+  // A prompt, or a question the agent posted apart from its turn (Codex): both wait for you.
+  let waiting = $derived(task?.phase === 'waiting' || !!task?.waiting)
   let ask = $derived(waiting ? task?.waiting : undefined)
   let question = $derived(ask?.questions?.[0])
   // Several questions, or several answers to one: the prompt steps through them, so offer the

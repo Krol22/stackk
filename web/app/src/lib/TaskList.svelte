@@ -46,7 +46,7 @@
 
   function status(t: Task): string {
     if (t.run_state === 'exited') return 'done'
-    if (t.phase === 'waiting') return t.waiting_kind === 'question' ? 'asks' : 'permission'
+    if (t.phase === 'waiting' || t.waiting) return t.waiting_kind === 'question' ? 'asks' : 'permission'
     if (t.phase === 'working') return 'working'
     if (t.phase === 'shell') return 'shell'
     if (t.phase === 'unknown') return 'quiet'
@@ -55,7 +55,7 @@
 </script>
 
 {#snippet row(t: Task)}
-  <a class="task" class:waiting={t.phase === 'waiting'} href="#/t/{encodeURIComponent(t.id)}">
+  <a class="task" class:waiting={t.phase === 'waiting' || !!t.waiting} href="#/t/{encodeURIComponent(t.id)}">
     <span class="top">
       <span class="name">{#if t.priority}<span class="prio">★</span> {/if}{t.name}</span>
       <span class="age">{ago(t.view === 'running' ? t.phase_since : t.queued_at || t.phase_since, now)}</span>

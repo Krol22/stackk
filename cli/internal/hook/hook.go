@@ -78,6 +78,9 @@ func Parse(agent string, raw []byte) (store.Event, Payload, bool) {
 		ev.Kind, ev.StartSource = "start", p.Source
 	case "UserPromptSubmit":
 		ev.Kind, ev.Msg = "prompt", OneLine(p.Prompt)
+		if keys, answer := ag.Answered(p.Prompt); len(keys) > 0 {
+			ev.Answered, ev.Msg = keys, "answered: "+OneLine(answer)
+		}
 	case "Stop":
 		ev.Kind = "stop"
 		if p.subagentsRunning() {
@@ -92,8 +95,11 @@ func Parse(agent string, raw []byte) (store.Event, Payload, bool) {
 		ev.Kind, ev.Msg = "fail", OneLine(p.Error)
 	case "PermissionRequest", "PreToolUse":
 		// Claude also asks permission for AskUserQuestion: that is the question, not a yes/no.
-		if q, _, ok := ag.Question(p.ToolName, p.ToolInput); ok {
+		if q, async, ok := ag.Question(p.ToolName, p.ToolInput); ok {
 			ev.Kind, ev.WaitingKind = "wait", "question"
+			if async { // posted, the turn goes on: it waits for you apart from the turn
+				ev.Kind, ev.WaitingKind = "ask", ""
+			}
 			ev.Msg = "question: " + question(q)
 			ev.Detail = questionDetail(q)
 		} else if p.HookEventName == "PermissionRequest" {

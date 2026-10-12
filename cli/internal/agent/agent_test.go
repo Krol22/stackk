@@ -128,7 +128,7 @@ func TestCodexQuestion(t *testing.T) {
 	if _, _, ok := cx.Question("Bash", nil); ok {
 		t.Error("a shell command is no question")
 	}
-	if a := cx.Answers(2); strings.Join(a.Options[1], " ") != "alt-up wait 2" || strings.Join(a.Own, " ") != "alt-up wait 3" || a.Yes[0] != "y" {
+	if a := cx.Answers(2); strings.Join(a.Options[1], " ") != "alt-down wait alt-up wait 2" || strings.Join(a.Own, " ") != "alt-down wait alt-up wait 3" || a.Yes[0] != "y" {
 		t.Errorf("answers: %+v", a)
 	}
 }
@@ -147,5 +147,19 @@ func TestCodexHooksAreAddedOnceAndKeepOthers(t *testing.T) {
 	}
 	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
 		t.Errorf("mode changed to %v", st.Mode().Perm())
+	}
+}
+
+func TestCodexAnswered(t *testing.T) {
+	cx := codex{base{"codex"}}
+	prompt := "<send_user_message_question_reply>\n" +
+		`[{"answer":"Banana","question":"Pick a fruit","questionItemId":"[\"request_user_input_async\",\"call_1\",0]"}]` +
+		"\n</send_user_message_question_reply>"
+	keys, answer := cx.Answered(prompt)
+	if len(keys) != 1 || keys[0] != "call_1#0" || answer != "Banana" {
+		t.Errorf("answered %v %q", keys, answer)
+	}
+	if keys, _ := cx.Answered("just a prompt [with brackets]"); keys != nil {
+		t.Errorf("an ordinary prompt answers nothing: %v", keys)
 	}
 }
