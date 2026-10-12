@@ -2,7 +2,7 @@
 # "find session": search past Claude/omp sessions on disk and put one back on the stack.
 # Sessions are fake transcripts; the model is testdata/fakeai.sh.
 export STACKK_IT=${STACKK_IT:-$(mktemp -d)/it}
-export STACKK_CLAUDE_PROJECTS=$STACKK_IT/claude-projects STACKK_OMP_SESSIONS=$STACKK_IT/omp-sessions STACKK_INDEX_TMP=1
+export STACKK_CLAUDE_PROJECTS=$STACKK_IT/claude-projects STACKK_OMP_SESSIONS=$STACKK_IT/omp-sessions STACKK_CODEX_SESSIONS=$STACKK_IT/codex-sessions STACKK_INDEX_TMP=1
 export STACKK_AI_CMD="$(cd "$(dirname "$0")" && pwd)/fakeai.sh"
 [ -n "${STACKK_DEMO:-}" ] && export FAKEAI_DELAY=5   # long enough to see "asking claude…"
 source "$(dirname "$0")/lib.sh"

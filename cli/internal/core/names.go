@@ -1,9 +1,9 @@
 package core
 
 import (
-	"github.com/krol22/stackk/cli/internal/agent"
 	"strings"
 
+	"github.com/krol22/stackk/cli/internal/agent"
 	"github.com/krol22/stackk/cli/internal/store"
 )
 

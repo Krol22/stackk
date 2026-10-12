@@ -92,10 +92,10 @@ func Parse(agent string, raw []byte) (store.Event, Payload, bool) {
 		ev.Kind, ev.Msg = "fail", OneLine(p.Error)
 	case "PermissionRequest", "PreToolUse":
 		// Claude also asks permission for AskUserQuestion: that is the question, not a yes/no.
-		if p.ToolName == "AskUserQuestion" {
+		if q, _, ok := ag.Question(p.ToolName, p.ToolInput); ok {
 			ev.Kind, ev.WaitingKind = "wait", "question"
-			ev.Msg = "question: " + question(p.ToolInput)
-			ev.Detail = questionDetail(p.ToolInput)
+			ev.Msg = "question: " + question(q)
+			ev.Detail = questionDetail(q)
 		} else if p.HookEventName == "PermissionRequest" {
 			ev.Kind, ev.WaitingKind = "wait", "permission"
 			ev.Msg = "permission: " + ToolSummary(p.ToolName, p.ToolInput)
@@ -104,6 +104,9 @@ func Parse(agent string, raw []byte) (store.Event, Payload, bool) {
 			return ev, p, false
 		}
 	case "PostToolUse", "PostToolUseFailure":
+		if _, async, ok := ag.Question(p.ToolName, p.ToolInput); ok && async {
+			return ev, p, false // the question was only posted: the answer comes as a prompt
+		}
 		ev.Kind, ev.Tool = "tool_done", ToolSummary(p.ToolName, p.ToolInput)
 	case "SessionEnd":
 		ev.Kind = "end"

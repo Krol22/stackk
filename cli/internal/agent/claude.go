@@ -247,7 +247,7 @@ func installClaudeHooks(path, self string, out func(string)) error {
 	added := 0
 	for _, e := range claudeEvents {
 		entries, _ := hooks[e.event].([]any)
-		if hasStackk(entries) {
+		if hasMark(entries, "claude") {
 			continue
 		}
 		entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": cmd, "timeout": 3}}}
@@ -280,14 +280,14 @@ func installClaudeHooks(path, self string, out func(string)) error {
 	return nil
 }
 
-// hasStackk reports an existing stackk hook (any path to the binary) among an event's entries.
-func hasStackk(entries []any) bool {
+// hasMark reports an existing stackk hook for agent (any path to the binary) among an event's entries.
+func hasMark(entries []any, agent string) bool {
 	for _, e := range entries {
 		m, _ := e.(map[string]any)
 		hs, _ := m["hooks"].([]any)
 		for _, h := range hs {
 			hm, _ := h.(map[string]any)
-			if c, _ := hm["command"].(string); strings.Contains(c, "stackk") && strings.Contains(c, " mark claude") {
+			if c, _ := hm["command"].(string); strings.Contains(c, "stackk") && strings.Contains(c, " mark "+agent) {
 				return true
 			}
 		}

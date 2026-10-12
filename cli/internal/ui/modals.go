@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"github.com/krol22/stackk/cli/internal/agent"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/krol22/stackk/cli/internal/agent"
 	"github.com/krol22/stackk/cli/internal/store"
 	zone "github.com/lrstanley/bubblezone"
 )

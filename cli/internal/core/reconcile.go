@@ -3,14 +3,12 @@ package core
 import (
 	"errors"
 	"fmt"
-	"github.com/krol22/stackk/cli/internal/agent"
-
 	"hash/fnv"
 	"os"
 	"strconv"
 
+	"github.com/krol22/stackk/cli/internal/agent"
 	"github.com/krol22/stackk/cli/internal/safe"
-
 	"github.com/krol22/stackk/cli/internal/store"
 	"github.com/krol22/stackk/cli/internal/tmux"
 )

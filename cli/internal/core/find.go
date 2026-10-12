@@ -3,11 +3,11 @@ package core
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/krol22/stackk/cli/internal/agent"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/krol22/stackk/cli/internal/agent"
 	"github.com/krol22/stackk/cli/internal/hook"
 	"github.com/krol22/stackk/cli/internal/sessions"
 	"github.com/krol22/stackk/cli/internal/store"

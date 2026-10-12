@@ -6,6 +6,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -37,6 +38,10 @@ type Agent interface {
 	MainSession(path string) (main string, subagent bool)
 	// LastText is the agent's last answer from its transcript, for hooks that don't carry it.
 	LastText(path string) string
+	// Question reports a tool call that asks you a question, as AskUserQuestion's input
+	// ({questions: [{question, options: [{label}]}]}); async when the call returns at once and
+	// the answer comes later, as a prompt.
+	Question(tool string, input json.RawMessage) (questions json.RawMessage, async, ok bool)
 	// AsksTrust reports the agent's "do you trust this folder?" on its screen.
 	AsksTrust(screen string) bool
 	// Answers are the keys that answer its prompts; a question has n options.
@@ -59,7 +64,7 @@ type Answers struct {
 	Exit    []string   `json:"exit,omitempty"`
 }
 
-var all = []Agent{claude{base{"claude"}}, omp{base{"omp"}}}
+var all = []Agent{claude{base{"claude"}}, omp{base{"omp"}}, codex{base{"codex"}}}
 
 // All lists the agents stackk knows, the default first.
 func All() []Agent { return all }
@@ -143,6 +148,9 @@ func (base) ParseSession(sessions.File) (sessions.Session, bool) { return sessio
 func (base) Messages(string, int) ([]sessions.Message, error)    { return nil, ErrNotImplemented }
 func (base) MainSession(path string) (string, bool)              { return path, false }
 func (base) LastText(string) string                              { return "" }
-func (base) AsksTrust(string) bool                               { return false }
-func (base) Answers(int) Answers                                 { return Answers{} }
-func (base) CancelReported() bool                                { return true }
+func (base) Question(tool string, input json.RawMessage) (json.RawMessage, bool, bool) {
+	return input, false, tool == "AskUserQuestion"
+}
+func (base) AsksTrust(string) bool { return false }
+func (base) Answers(int) Answers   { return Answers{} }
+func (base) CancelReported() bool  { return true }

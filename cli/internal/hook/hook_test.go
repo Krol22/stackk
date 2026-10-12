@@ -71,3 +71,14 @@ func TestAskUserQuestionPermissionIsTheQuestion(t *testing.T) {
 		t.Errorf("the permission for AskUserQuestion must keep the question and its options: %+v", perm)
 	}
 }
+
+func TestCodexAsyncQuestionWaitsForTheAnswer(t *testing.T) {
+	in := `"tool_name":"request_user_input_async","tool_input":{"questions":[{"title":"Pick","options":["A","B"]}]}`
+	ev, _, ok := Parse("codex", []byte(`{"hook_event_name":"PreToolUse",`+in+`}`))
+	if !ok || ev.WaitingKind != "question" || !strings.Contains(ev.Detail, `"label":"B"`) {
+		t.Errorf("Codex's question waits for you, with its options: %+v", ev)
+	}
+	if _, _, ok := Parse("codex", []byte(`{"hook_event_name":"PostToolUse",`+in+`}`)); ok {
+		t.Error("the async question returns at once: that is not the answer")
+	}
+}

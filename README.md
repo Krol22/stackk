@@ -2,7 +2,7 @@
 
 **A round-robin stack for the AI coding sessions you juggle in tmux.**
 
-You run a handful of Claude Code / [omp](https://github.com/can1357/oh-my-pi) sessions at once and hop between them. stackk puts them in one mouse-driven dashboard. Whoever has waited for you the longest is on top. Click it, answer, click the next one. When an agent finishes its turn, the session comes back on the stack by itself.
+You run a handful of Claude Code / [omp](https://github.com/can1357/oh-my-pi) / [Codex](https://github.com/openai/codex) sessions at once and hop between them. stackk puts them in one mouse-driven dashboard. Whoever has waited for you the longest is on top. Click it, answer, click the next one. When an agent finishes its turn, the session comes back on the stack by itself.
 
 ![The stackk dashboard: sessions waiting for you, agents at work, parked work](docs/dashboard.png)
 
@@ -15,7 +15,7 @@ Click a session and its real terminal slides in on the right. Scrolling, selecti
 
 ![A session open in the drawer next to the stack](docs/drawer.png)
 
-Closed a session weeks ago and need it back? **⌕ find** searches your past Claude and omp sessions by title, prompts and folder. Press Enter and a small model picks the matches, even when you remember it in other words. One click resumes the conversation onto the stack.
+Closed a session weeks ago and need it back? **⌕ find** searches your past Claude, omp and Codex sessions by title, prompts and folder. Press Enter and a small model picks the matches, even when you remember it in other words. One click resumes the conversation onto the stack.
 
 ![Finding a past session with AI ranking](docs/find.png)
 
@@ -26,7 +26,7 @@ A macOS notification tells you when a session has been waiting a couple of minut
 - macOS for notifications ([terminal-notifier](https://github.com/julienXX/terminal-notifier) makes them clickable; without it they fall back to `osascript`). The rest works anywhere tmux does
 - tmux 3.3+ with `set -g mouse on` (stackk is driven with the mouse)
 - Go 1.24+ to build (newer toolchains download themselves via `GOTOOLCHAIN`)
-- Claude Code and/or omp
+- Claude Code, omp and/or Codex
 
 ## Install
 
@@ -35,7 +35,7 @@ git clone git@github.com:Krol22/stackk.git && cd stackk
 make setup   # builds cli/ into ~/.local/bin/stackk and runs `stackk setup`
 ```
 
-`stackk setup` adds stackk's hooks to `~/.claude/settings.json` (it keeps a backup and leaves your other hooks alone) and writes the omp extension to `~/.omp/agent/extensions/stackk.ts`. Sessions that were already running before this don't report anything until you restart them: `/exit`, then `claude -c` / `omp -c`.
+`stackk setup` adds stackk's hooks to `~/.claude/settings.json` (it keeps a backup and leaves your other hooks alone) writes the omp extension to `~/.omp/agent/extensions/stackk.ts`, and adds hooks to Codex's `~/.codex/hooks.json` (Codex asks once to trust them, and needs `[features] hooks = true`). Sessions that were already running before this don't report anything until you restart them: `/exit`, then `claude -c` / `omp -c`.
 
 ## Use
 
@@ -85,7 +85,7 @@ CLI: `stackk ls [-json]`, `stackk show|send|key <task>`, `stackk log [task]`, `s
 
 ## How it works
 
-- **Agent hooks report state:** `stackk mark claude|omp` runs on Claude's hook events and from the omp extension. Hooks are synchronous and take about 10 ms; outside a stack they exit after one tmux query.
+- **Agent hooks report state:** `stackk mark claude|omp|codex` runs on Claude's and Codex's hook events and from the omp extension. Each agent is one implementation of `cli/internal/agent`; what one can't do is "not implemented" and stackk falls back to what the screen tells. Hooks are synchronous and take about 10 ms; outside a stack they exit after one tmux query.
 - **tmux holds the processes:** a stack is a tmux session marked `@stackk`, and each window is a task.
 - **SQLite holds the state and log:** `~/.local/state/stackk/stackk.db`.
 - **The drawer swaps panes:** it `swap-pane`s the agent's real pane next to the dashboard, so scrolling, selection and paste are plain tmux.

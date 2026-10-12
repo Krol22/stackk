@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/krol22/stackk/cli/internal/sessions"
 )
@@ -20,6 +21,7 @@ func TestParseClaudeAndOmp(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("STACKK_CLAUDE_PROJECTS", filepath.Join(dir, "claude"))
 	t.Setenv("STACKK_OMP_SESSIONS", filepath.Join(dir, "omp"))
+	t.Setenv("STACKK_CODEX_SESSIONS", filepath.Join(dir, "codex"))
 	write(t, filepath.Join(dir, "claude", "-w-shop", "c1.jsonl"),
 		`{"type":"user","sessionId":"c1","cwd":"/w/shop","message":{"content":"return search on Mondial Relay fails"}}`,
 		`{"type":"user","sessionId":"c1","cwd":"/w/shop","message":{"content":[{"type":"tool_result","content":"x"}]}}`,
@@ -83,5 +85,67 @@ func TestAnswers(t *testing.T) {
 	}
 	if a := (base{"x"}).Answers(3); a.Options != nil || a.Yes != nil {
 		t.Errorf("an agent that says nothing offers no answers: %+v", a)
+	}
+}
+
+func TestCodexSessionsAndTranscript(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("STACKK_CODEX_SESSIONS", dir)
+	cx := codex{base{"codex"}}
+	item := func(it string) string {
+		return `{"timestamp":"2026-10-12T12:00:00Z","type":"event_msg","payload":{"type":"item_completed","item":` + it + `}}`
+	}
+	live := filepath.Join(dir, "2026", "10", "12", "rollout-a.jsonl")
+	write(t, live,
+		`{"type":"session_meta","payload":{"id":"cx1","cwd":"/w/api","source":"cli"}}`,
+		item(`{"type":"UserMessage","content":[{"type":"text","text":"why is the pool exhausted?"}]}`),
+		item(`{"type":"CommandExecution","command":["/bin/zsh","-lc","rg pool"],"exit_code":1}`),
+		item(`{"type":"AgentMessage","content":[{"type":"Text","text":"The pool is too small."}]}`))
+	write(t, filepath.Join(dir, "2026", "10", "12", "rollout-b.jsonl"),
+		`{"type":"session_meta","payload":{"id":"cx2","cwd":"/w/api","source":"exec"}}`,
+		item(`{"type":"UserMessage","content":[{"type":"text","text":"a one-off exec run"}]}`))
+	var got []sessions.Session
+	for _, f := range cx.SessionFiles(time.Time{}) {
+		if s, ok := cx.ParseSession(f); ok {
+			got = append(got, s)
+		}
+	}
+	if len(got) != 1 || got[0].ID != "cx1" || got[0].Title != "why is the pool exhausted?" || got[0].LastText != "The pool is too small." {
+		t.Errorf("only the interactive session, titled by its first prompt: %+v", got)
+	}
+	msgs, err := cx.Messages(live, 10)
+	if err != nil || len(msgs) != 3 || msgs[1].Tool != "Bash rg pool" || !msgs[1].Error || msgs[2].Role != "assistant" {
+		t.Errorf("transcript: %+v %v", msgs, err)
+	}
+}
+
+func TestCodexQuestion(t *testing.T) {
+	cx := codex{base{"codex"}}
+	q, async, ok := cx.Question("request_user_input_async", []byte(`{"questions":[{"title":"Pick a fruit","options":["Apple","Banana"]}]}`))
+	if !ok || !async || string(q) != `{"questions":[{"question":"Pick a fruit","options":[{"label":"Apple"},{"label":"Banana"}]}]}` {
+		t.Errorf("request_user_input in AskUserQuestion's shape: %s %v %v", q, async, ok)
+	}
+	if _, _, ok := cx.Question("Bash", nil); ok {
+		t.Error("a shell command is no question")
+	}
+	if a := cx.Answers(2); strings.Join(a.Options[1], " ") != "alt-up wait 2" || strings.Join(a.Own, " ") != "alt-up wait 3" || a.Yes[0] != "y" {
+		t.Errorf("answers: %+v", a)
+	}
+}
+
+func TestCodexHooksAreAddedOnceAndKeepOthers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	os.WriteFile(path, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"moshi-hook codex-hook"}]}]}}`), 0o600)
+	for range 2 {
+		if err := installCodexHooks(path, "/bin/stackk", func(string) {}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Count(string(raw), "stackk mark codex") != len(codexEvents) || !strings.Contains(string(raw), "moshi-hook") {
+		t.Errorf("one stackk hook per event, others kept:\n%s", raw)
+	}
+	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
+		t.Errorf("mode changed to %v", st.Mode().Perm())
 	}
 }

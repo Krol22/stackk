@@ -1,12 +1,12 @@
 package core
 
 import (
-	"github.com/krol22/stackk/cli/internal/agent"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/krol22/stackk/cli/internal/agent"
 	"github.com/krol22/stackk/cli/internal/tmux"
 )
 

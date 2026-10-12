@@ -3,7 +3,7 @@
 # tmux server so tests can run meanwhile. Phases are paced so the tape can wait for each screen.
 export STACKK_TEST_SOCKET=stackk-shot STACKK_DEMO=1
 export STACKK_IT=${STACKK_IT:-$(mktemp -d)/it}
-export STACKK_CLAUDE_PROJECTS=$STACKK_IT/claude-projects STACKK_OMP_SESSIONS=$STACKK_IT/omp-sessions STACKK_INDEX_TMP=1
+export STACKK_CLAUDE_PROJECTS=$STACKK_IT/claude-projects STACKK_OMP_SESSIONS=$STACKK_IT/omp-sessions STACKK_CODEX_SESSIONS=$STACKK_IT/codex-sessions STACKK_INDEX_TMP=1
 export STACKK_AI_CMD="$(cd "$(dirname "$0")" && pwd)/fakeai.sh" FAKEAI_DELAY=1 FAKEAI_PICK="Postgres|pool"
 source "$(dirname "$0")/lib.sh"
 t set -g status off
