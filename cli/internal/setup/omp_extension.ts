@@ -55,8 +55,14 @@ export default function stackk(omp: ExtensionAPI): void {
   )
   omp.on("tool_call", (e: any, ctx: any) => {
     if (e?.toolName !== "ask") return
-    const question = e?.input?.question ?? e?.input?.questions?.[0]?.question ?? ""
-    send("PreToolUse", ctx, { tool_name: "AskUserQuestion", tool_input: { questions: [{ question }] }, tool_use_id: e?.toolCallId })
+    const qs: any[] = e?.input?.questions ?? [{ question: e?.input?.question ?? "" }]
+    const questions = qs.map((q: any) => ({
+      question: q?.question ?? "",
+      header: q?.header ?? "",
+      multiSelect: !!q?.multi,
+      options: (q?.options ?? []).map((o: any) => ({ label: o?.label ?? "", description: o?.description ?? "" })),
+    }))
+    send("PreToolUse", ctx, { tool_name: "AskUserQuestion", tool_input: { questions }, tool_use_id: e?.toolCallId })
   })
   omp.on("tool_result", (e: any, ctx: any) =>
     send("PostToolUse", ctx, { tool_name: e?.toolName, tool_input: e?.input ?? {}, tool_use_id: e?.toolCallId }),

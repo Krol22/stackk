@@ -62,3 +62,12 @@ func TestOmpSubagentEventsStayOutOfTheSession(t *testing.T) {
 		t.Errorf("the main session's own events are kept: %+v %v", ev, ok)
 	}
 }
+
+func TestAskUserQuestionPermissionIsTheQuestion(t *testing.T) {
+	in := `"tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which?","options":[{"label":"A"},{"label":"B"}]}]}`
+	pre, _, _ := Parse("claude", []byte(`{"hook_event_name":"PreToolUse",`+in+`}`))
+	perm, _, ok := Parse("claude", []byte(`{"hook_event_name":"PermissionRequest",`+in+`}`))
+	if !ok || perm.WaitingKind != "question" || perm.Detail != pre.Detail || !strings.Contains(perm.Detail, `"label":"B"`) {
+		t.Errorf("the permission for AskUserQuestion must keep the question and its options: %+v", perm)
+	}
+}

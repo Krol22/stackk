@@ -167,6 +167,12 @@ func (a *App) Keys(id string, keys []string, waitingID string) error {
 			return fmt.Errorf("unknown key %q (a letter, a digit or one of: %s)", k, strings.Join(KeyNames(), ", "))
 		}
 	}
-	_, err = a.T.Run(args...)
-	return err
+	if _, err = a.T.Run(args...); err != nil {
+		return err
+	}
+	// Claude reports nothing when its prompt is cancelled: it is back at its input, waiting for you.
+	if waitingID != "" && t.Agent == "claude" && len(keys) == 1 && strings.EqualFold(keys[0], "esc") {
+		return a.SetPhase(id, store.PhaseIdle)
+	}
+	return nil
 }

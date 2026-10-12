@@ -89,17 +89,19 @@ func Parse(agent string, raw []byte) (store.Event, Payload, bool) {
 		ev.Msg = OneLine(msg)
 	case "StopFailure":
 		ev.Kind, ev.Msg = "fail", OneLine(p.Error)
-	case "PermissionRequest":
-		ev.Kind, ev.WaitingKind = "wait", "permission"
-		ev.Msg = "permission: " + ToolSummary(p.ToolName, p.ToolInput)
-		ev.Detail = permissionDetail(p.ToolName, p.ToolInput)
-	case "PreToolUse":
-		if p.ToolName != "AskUserQuestion" {
+	case "PermissionRequest", "PreToolUse":
+		// Claude also asks permission for AskUserQuestion: that is the question, not a yes/no.
+		if p.ToolName == "AskUserQuestion" {
+			ev.Kind, ev.WaitingKind = "wait", "question"
+			ev.Msg = "question: " + question(p.ToolInput)
+			ev.Detail = questionDetail(p.ToolInput)
+		} else if p.HookEventName == "PermissionRequest" {
+			ev.Kind, ev.WaitingKind = "wait", "permission"
+			ev.Msg = "permission: " + ToolSummary(p.ToolName, p.ToolInput)
+			ev.Detail = permissionDetail(p.ToolName, p.ToolInput)
+		} else {
 			return ev, p, false
 		}
-		ev.Kind, ev.WaitingKind = "wait", "question"
-		ev.Msg = "question: " + question(p.ToolInput)
-		ev.Detail = questionDetail(p.ToolInput)
 	case "PostToolUse", "PostToolUseFailure":
 		ev.Kind, ev.Tool = "tool_done", ToolSummary(p.ToolName, p.ToolInput)
 	case "SessionEnd":

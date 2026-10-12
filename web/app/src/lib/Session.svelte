@@ -96,6 +96,11 @@
 
   // An answer to the prompt on screen, and to no other: refused if the agent moved on meanwhile.
   const press = (k: string) => act(() => api.keys(id, [k], { waiting: task?.waiting_id }))
+  // Claude picks option n with the digit n. omp's ask takes no digits and starts on the recommended
+  // option: go to the top (the list doesn't wrap), then down to the option.
+  const optionKeys = (i: number, n: number) =>
+    task?.agent === 'omp' ? [...Array(n + 1).fill('up'), ...Array(i).fill('down'), 'enter'] : [String(i + 1)]
+  const choose = (i: number, n: number) => act(() => api.keys(id, optionKeys(i, n), { waiting: task?.waiting_id }))
 
   // hide and rm take the session off the list: back to it once done.
   async function leave(action: 'hide' | 'rm') {
@@ -139,6 +144,13 @@
     const paths = files.map((f) => f.path).join(' ')
     const msg = files.length ? `${t || 'See the attached files.'} (attached: ${paths})` : t
     act(async () => {
+      if (question && !stepping) {
+        // Your own answer: the option after the listed ones (Claude's "Type something", omp's
+        // "Other") takes the text.
+        const n = question.options?.length ?? 0
+        await api.keys(id, optionKeys(n, n), { waiting: task?.waiting_id })
+        await new Promise((r) => setTimeout(r, 300))
+      }
       await api.send(id, msg)
       text = ''
       files = []
@@ -265,10 +277,11 @@
         {:else if question}
           <p class="q">{question.question}</p>
           {#each question.options ?? [] as o, i (i)}
-            <button class="choice" disabled={busy} onclick={() => press(String(i + 1))}>
+            <button class="choice" disabled={busy} onclick={() => choose(i, question.options.length)}>
               <b>{o.label}</b>{#if o.description}<span class="d">{o.description}</span>{/if}
             </button>
           {/each}
+          <button class="choice ghost" disabled={busy} onclick={() => input?.focus()}>type your own answer…</button>
           <button class="choice ghost" disabled={busy} onclick={() => press('esc')}>cancel</button>
         {:else if ask?.tool}
           <p class="q">{ask.tool}</p>
@@ -298,7 +311,7 @@
       <button type="button" class="clip" aria-label="attach" disabled={busy} onclick={() => picker?.click()}>+</button>
       <textarea
         rows="1"
-        placeholder="reply…"
+        placeholder={question && !stepping ? 'your own answer…' : 'reply…'}
         enterkeyhint="send"
         autocapitalize="off"
         spellcheck="false"
