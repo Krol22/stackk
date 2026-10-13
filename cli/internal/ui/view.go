@@ -167,6 +167,9 @@ func (m *stackModel) taskRows(t store.Task, view string, pos int, w int) []strin
 	markTxt, markSt := m.mark(t)
 	age := ago(t.PhaseSince)
 	nameW := max(8, w-4-9-3-6-4)
+	if view == "stack" { // the second line says what it waits for; the order says how long
+		nameW += 3 + 6
+	}
 	leadSt := st(sGrey)
 	if view == "stack" {
 		leadSt = st(sYellow.Bold(true))
@@ -180,14 +183,16 @@ func (m *stackModel) taskRows(t store.Task, view string, pos int, w int) []strin
 	}
 	name := st(sBright).Render(fit(t.Name, nameW))
 	if t.Priority {
-		name = st(sRed.Bold(true)).Render("! ") + st(sBright).Render(fit(t.Name, nameW-2))
+		name = st(sYellow).Render("★ ") + st(sBright).Render(fit(t.Name, nameW-2))
 	}
 	line1 := leadSt.Render(" "+lead+" ") +
 		name + st(sText).Render(" ") +
-		st(agentStyle(t.Agent)).Render(fit(agentLabel(t.Agent), 8)) + st(sText).Render(" ") +
-		st(markSt).Render(fit(markTxt, 2)) + st(sText).Render(" ") +
-		st(sGrey).Render(fit(fmt.Sprintf("%5s", age), 6)) +
-		zone.Mark("x:"+t.ID, st(sGrey).Render(" … "))
+		st(agentStyle(t.Agent)).Render(fit(agentLabel(t.Agent), 8))
+	if view != "stack" {
+		line1 += st(sText).Render(" ") + st(markSt).Render(fit(markTxt, 2)) + st(sText).Render(" ") +
+			st(sGrey).Render(fit(fmt.Sprintf("%5s", age), 6))
+	}
+	line1 += zone.Mark("x:"+t.ID, st(sGrey).Render(" … "))
 	line1 = padRight(line1, w)
 	text, ds := m.detail(t, view)
 	line2 := st(ds).Render(fit("     "+text, w))

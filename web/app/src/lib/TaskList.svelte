@@ -57,7 +57,7 @@
 {#snippet row(t: Task)}
   <a class="task" class:waiting={t.phase === 'waiting'} href="#/t/{encodeURIComponent(t.id)}">
     <span class="top">
-      <span class="name">{#if t.priority}<span class="prio">!</span> {/if}{t.name}</span>
+      <span class="name">{#if t.priority}<span class="prio">★</span> {/if}{t.name}</span>
       <span class="age">{ago(t.view === 'running' ? t.phase_since : t.queued_at || t.phase_since, now)}</span>
     </span>
     <span class="sub">
@@ -200,7 +200,7 @@
   .task.waiting { border-left-color: var(--accent); background: var(--raised); }
   .top { display: flex; gap: 1ch; }
   .name { color: var(--bright); font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .prio { color: var(--red); }
+  .prio { color: var(--accent); }
   .age { color: var(--dim); }
   .sub { display: block; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status { color: var(--dim); margin-right: 1ch; }
