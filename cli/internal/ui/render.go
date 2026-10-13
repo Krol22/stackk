@@ -15,7 +15,7 @@ import (
 var (
 	cYellow, cGrey, cDim, cText, cBright, cPurple, cGreen, cRed, cLine, cSel, cHover lipgloss.Color
 
-	sYellow, sGrey, sDim, sText, sBright, sPurple, sGreen, sRed, sLine, sButton, sHotBtn lipgloss.Style
+	sYellow, sGrey, sDim, sText, sBright, sPurple, sGreen, sRed, sBlue, sLine, sButton, sHotBtn lipgloss.Style
 )
 
 func init() { applyTheme(defaultTheme) }
@@ -24,6 +24,8 @@ func agentStyle(agent string) lipgloss.Style {
 	switch agent {
 	case "omp":
 		return sPurple
+	case "codex":
+		return sBlue
 	case "":
 		return sGrey
 	}
