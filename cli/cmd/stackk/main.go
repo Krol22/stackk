@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/krol22/stackk/cli/internal/agent"
 	"github.com/krol22/stackk/cli/internal/config"
 	"github.com/krol22/stackk/cli/internal/core"
 	"github.com/krol22/stackk/cli/internal/sessions"
@@ -114,6 +115,12 @@ func main() {
 		err = uploadCmd(app, args)
 	case "dirs":
 		err = dirsCmd(app, args)
+	case "agents":
+		if len(args) > 0 && args[0] == "-json" {
+			err = printJSON(agent.Names())
+		} else {
+			fmt.Println(strings.Join(agent.Names(), "\n"))
+		}
 	case "rename":
 		err = renameCmd(app, args)
 	case "log":
@@ -181,7 +188,7 @@ func mark(args []string) {
 		logErr(fmt.Errorf("mark: timeout"))
 		os.Exit(0)
 	}()
-	agent := "claude"
+	agent := agent.Names()[0] // hooks installed before the agent was named
 	if len(args) > 0 {
 		agent = args[0]
 	}
@@ -263,7 +270,7 @@ func take(app *core.App, args []string) error {
 
 func newTask(app *core.App, args []string) error {
 	fs := flag.NewFlagSet("new", flag.ExitOnError)
-	agent := fs.String("agent", "claude", "claude | omp")
+	agent := fs.String("agent", agent.Names()[0], strings.Join(agent.Names(), " | "))
 	name := fs.String("name", "", "task name")
 	stack := fs.String("stack", "", "stack")
 	fs.Parse(args)

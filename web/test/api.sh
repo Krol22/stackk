@@ -20,6 +20,8 @@ step "the app and the task list"
 check "the app is served" 'get / | grep -q "<div id=\"app\">"'
 check "a client-side route gets the app too" 'get /t/whatever | grep -q "<div id=\"app\">"'
 check "tasks come from stackk ls -json" '[ "$(field alpha view)" = stack ]'
+check "the agents stackk can start, the default first" 'get /api/agents | python3 -c "import json,sys; a=json.load(sys.stdin); assert a[0]==\"claude\" and \"omp\" in a"'
+check "a task carries its agent's answer keys" 'get /api/tasks | python3 -c "import json,sys; t=[t for t in json.load(sys.stdin) if t[\"name\"]==\"alpha\"][0]; assert t[\"answers\"][\"yes\"]==[\"1\"] and t[\"answers\"][\"trust\"]==[\"down\",\"enter\"]"'
 
 step "a session: its screen, a reply, a key"
 check "the screen" 'get "/api/tasks/$ID/screen?lines=50" | grep -q "fake claude"'

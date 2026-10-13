@@ -3,16 +3,17 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
+	"github.com/krol22/stackk/cli/internal/agent"
 	"github.com/krol22/stackk/cli/internal/core"
 	"github.com/krol22/stackk/cli/internal/sessions"
 	"github.com/krol22/stackk/cli/internal/store"
@@ -30,7 +31,8 @@ type taskJSON struct {
 	WaitingKind    string          `json:"waiting_kind,omitempty"`
 	WaitingID      string          `json:"waiting_id,omitempty"` // pass to key -if-waiting
 	Waiting        json.RawMessage `json:"waiting,omitempty"`    // what it asks: {tool, input} or {questions: [{question, options}]}
-	Agent          string          `json:"agent"`                // claude, omp, "" (a shell)
+	Agent          string          `json:"agent"`                // its name, "" for a shell
+	Answers        *agent.Answers  `json:"answers,omitempty"`    // keys that answer its prompts, the current question's options included
 	Cwd            string          `json:"cwd"`
 	LastMsg        string          `json:"last_msg"`
 	LastTool       string          `json:"last_tool,omitempty"`
@@ -49,14 +51,44 @@ type taskJSON struct {
 
 func toJSON(t store.Task, stackNames map[string]string) taskJSON {
 	return taskJSON{ID: t.ID, Name: t.Name, Stack: t.Stack, StackName: stackNames[t.Stack], View: store.View(t),
-		Phase: t.Phase, WaitingKind: t.WaitingKind, Agent: t.Agent, Cwd: t.Cwd, LastMsg: t.LastMsg, LastTool: t.LastTool,
+		Phase: t.Phase, WaitingKind: waitingKind(t), Agent: t.Agent, Cwd: t.Cwd, LastMsg: t.LastMsg, LastTool: t.LastTool,
 		LastToolAt: t.LastToolAt, Note: t.Note, Error: t.Error, PhaseSince: t.PhaseSince, QueuedAt: t.QueuedAt, Priority: t.Priority,
 		CreatedAt: t.CreatedAt, RunState: t.RunState, AgentSessionID: t.AgentSessionID, Pane: t.TmuxPane, Window: t.HomeWindow,
-		Waiting: waitingJSON(t), WaitingID: core.WaitingID(t)}
+		Waiting: waitingJSON(t), WaitingID: core.WaitingID(t), Answers: answers(t)}
 }
 
+func waitingKind(t store.Task) string {
+	if t.Phase != store.PhaseWaiting && store.PendingQuestion(t) != nil {
+		return "question"
+	}
+	return t.WaitingKind
+}
+
+func answers(t store.Task) *agent.Answers {
+	ag, err := agent.Get(t.Agent)
+	if err != nil {
+		return nil
+	}
+	var w struct {
+		Questions []struct {
+			Options []json.RawMessage `json:"options"`
+		} `json:"questions"`
+	}
+	n := 0
+	if json.Unmarshal(waitingJSON(t), &w) == nil && len(w.Questions) > 0 {
+		n = len(w.Questions[0].Options)
+	}
+	a := ag.Answers(n)
+	return &a
+}
+
+// waitingJSON is what the task waits on you for: its prompt, else a question it posted apart
+// from the turn (one at a time, in order).
 func waitingJSON(t store.Task) json.RawMessage {
-	if t.Phase != store.PhaseWaiting || !json.Valid([]byte(t.WaitingDetail)) {
+	if t.Phase != store.PhaseWaiting {
+		return store.PendingQuestion(t)
+	}
+	if !json.Valid([]byte(t.WaitingDetail)) {
 		return nil
 	}
 	return json.RawMessage(t.WaitingDetail)
@@ -145,19 +177,18 @@ func transcriptCmd(app *core.App, args []string) error {
 	pos := flagsAnywhere(fs, args)
 	t := taskArg(app, pos, "transcript [-n count] [-json] <task>")
 	var msgs []sessions.Message
-	if t.SessionPath != "" { // empty until the agent's first hook
-		path := t.SessionPath
-		if t.Agent == "omp" { // recorded from a subagent's events by stackk before it told them apart
-			path, _ = sessions.OmpMain(path)
-		}
+	ag, _ := agent.Get(t.Agent)           // nil for a shell
+	if t.SessionPath != "" && ag != nil { // empty until the agent's first hook
+		// The main transcript even if stackk recorded a subagent's before it told them apart.
+		path, _ := ag.MainSession(t.SessionPath)
 		var err error
-		if msgs, err = sessions.Messages(t.Agent, path, *n); err != nil {
+		if msgs, err = ag.Messages(path, *n); err != nil && !errors.Is(err, agent.ErrNotImplemented) {
 			return err
 		}
 	}
 	// A new session can be stuck before its first hook, on Claude's "do you trust this folder?":
 	// nothing in the transcript says so, the screen does (and only until that first hook).
-	trust := t.LastEventAt == 0 && t.RunState != store.RunExited && asksTrust(app, t.ID)
+	trust := ag != nil && t.LastEventAt == 0 && t.RunState != store.RunExited && asksTrust(app, ag, t.ID)
 	if *asJSON {
 		if msgs == nil {
 			msgs = []sessions.Message{}
@@ -191,13 +222,9 @@ func transcriptCmd(app *core.App, args []string) error {
 	return nil
 }
 
-func asksTrust(app *core.App, id string) bool {
+func asksTrust(app *core.App, ag agent.Agent, id string) bool {
 	lines, err := app.Screen(id, 0)
-	if err != nil {
-		return false
-	}
-	screen := strings.Join(lines, "\n")
-	return strings.Contains(screen, "trust this folder") || strings.Contains(screen, "one you trust")
+	return err == nil && ag.AsksTrust(strings.Join(lines, "\n"))
 }
 
 func keyCmd(app *core.App, args []string) error {
@@ -210,7 +237,7 @@ func keyCmd(app *core.App, args []string) error {
 	if len(args) < 2 {
 		die(fmt.Errorf("usage: stackk key <task> <key…>"))
 	}
-	if *trust && !(t.LastEventAt == 0 && asksTrust(app, t.ID)) {
+	if ag, err := agent.Get(t.Agent); *trust && (err != nil || t.LastEventAt != 0 || !asksTrust(app, ag, t.ID)) {
 		return fmt.Errorf("%s no longer asks to trust its folder", t.Name)
 	}
 	return app.Keys(t.ID, args[1:], *waiting)
@@ -327,17 +354,8 @@ func dirsCmd(app *core.App, args []string) error {
 	}
 	if dir == home { // where your sessions ran lately, newest first
 		tasks, _ := store.Tasks(app.DB, "")
-		sort.Slice(tasks, func(i, j int) bool { return tasks[i].CreatedAt > tasks[j].CreatedAt })
-		seen := map[string]bool{}
-		for _, t := range tasks {
-			if t.Cwd == "" || seen[t.Cwd] || len(out.Recent) == 8 {
-				continue
-			}
-			if st, err := os.Stat(t.Cwd); err != nil || !st.IsDir() {
-				continue
-			}
-			seen[t.Cwd] = true
-			out.Recent = append(out.Recent, dirEntry{Name: filepath.Base(t.Cwd), Path: t.Cwd})
+		for _, d := range core.RecentDirs(tasks, 8) {
+			out.Recent = append(out.Recent, dirEntry{Name: filepath.Base(d), Path: d})
 		}
 	}
 	if *asJSON {

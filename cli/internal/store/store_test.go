@@ -183,6 +183,24 @@ func TestTxRollsBackOnPanic(t *testing.T) {
 	}
 }
 
+func TestPendingQuestionsOutliveTheTurn(t *testing.T) {
+	tk := live(PhaseWorking)
+	Reduce(&tk, Event{Kind: "ask", RunID: "r1", ToolUseID: "c1", Msg: "question: fruit?",
+		Detail: `{"questions":[{"question":"fruit?"},{"question":"color?"}]}`}, 10)
+	Reduce(&tk, Event{Kind: "stop", RunID: "r1"}, 11)
+	if !InStack(&tk) || string(PendingQuestion(tk)) != `{"questions":[{"question":"fruit?"}]}` {
+		t.Fatalf("the questions wait after the turn ends, first one first: %+v", tk)
+	}
+	Reduce(&tk, Event{Kind: "prompt", RunID: "r1", Answered: []string{AskKey("c1", 0)}}, 12)
+	if string(PendingQuestion(tk)) != `{"questions":[{"question":"color?"}]}` || !InStack(&tk) {
+		t.Fatalf("answering the first leaves the second, still on the stack: %+v", tk)
+	}
+	Reduce(&tk, Event{Kind: "prompt", RunID: "r1", Answered: []string{AskKey("c1", 1)}}, 13)
+	if PendingQuestion(tk) != nil || InStack(&tk) {
+		t.Fatalf("all answered: back to work, off the stack: %+v", tk)
+	}
+}
+
 func TestStackLessPutsPriorityFirst(t *testing.T) {
 	a := Task{ID: "a", QueuedAt: 1}
 	b := Task{ID: "b", QueuedAt: 2, Priority: true}

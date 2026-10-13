@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/krol22/stackk/cli/internal/agent"
 	"github.com/krol22/stackk/cli/internal/safe"
 	"github.com/krol22/stackk/cli/internal/store"
 )
@@ -124,18 +125,25 @@ func lockTask(id string) (unlock func()) {
 // keyNames are the keys Keys accepts besides single letters and digits.
 var keyNames = map[string]string{
 	"enter": "Enter", "esc": "Escape", "tab": "Tab", "shift-tab": "BTab", "space": "Space", "backspace": "BSpace",
-	"up": "Up", "down": "Down", "left": "Left", "right": "Right", "ctrl-c": "C-c",
+	"up": "Up", "down": "Down", "left": "Left", "right": "Right", "ctrl-c": "C-c", "alt-up": "M-Up", "alt-down": "M-Down",
 }
+
+// keyWait in a key sequence pauses before the next keys: for a prompt that opens asynchronously
+// (Codex's question behind ⌥↑) and drops keys that arrive with the one that opened it.
+const keyWait = "wait"
 
 // KeyNames lists the named keys, for help and errors.
 func KeyNames() []string {
-	return []string{"enter", "esc", "tab", "shift-tab", "space", "backspace", "up", "down", "left", "right", "ctrl-c"}
+	return []string{"enter", "esc", "tab", "shift-tab", "space", "backspace", "up", "down", "left", "right", "ctrl-c", "alt-up", "alt-down", keyWait}
 }
 
 // WaitingID names the prompt a task waits on (empty when it doesn't): when it began and what it
 // asks. Answers carry it, so one meant for a prompt never lands on the next.
 func WaitingID(t store.Task) string {
 	if t.Phase != store.PhaseWaiting {
+		if q := store.PendingQuestion(t); q != nil { // a question apart from the turn
+			return fmt.Sprintf("0-%08x", crc32.ChecksumIEEE(q))
+		}
 		return ""
 	}
 	what := t.WaitingDetail
@@ -156,22 +164,39 @@ func (a *App) Keys(id string, keys []string, waitingID string) error {
 	if waitingID != "" && WaitingID(t) != waitingID {
 		return fmt.Errorf("%s no longer asks that: it moved on", t.Name)
 	}
-	args := []string{"send-keys", "-t", t.TmuxPane}
+	// One send-keys per run of keys between waits.
+	runs := [][]string{{"send-keys", "-t", t.TmuxPane}}
 	for _, k := range keys {
+		cur := &runs[len(runs)-1]
 		switch name, ok := keyNames[strings.ToLower(k)]; {
+		case strings.EqualFold(k, keyWait):
+			runs = append(runs, []string{"send-keys", "-t", t.TmuxPane})
 		case ok:
-			args = append(args, name)
+			*cur = append(*cur, name)
 		case len(k) == 1 && (k[0] >= 'a' && k[0] <= 'z' || k[0] >= 'A' && k[0] <= 'Z' || k[0] >= '0' && k[0] <= '9'):
-			args = append(args, k)
+			*cur = append(*cur, k)
 		default:
 			return fmt.Errorf("unknown key %q (a letter, a digit or one of: %s)", k, strings.Join(KeyNames(), ", "))
 		}
 	}
-	if _, err = a.T.Run(args...); err != nil {
-		return err
+	for i, run := range runs {
+		if i > 0 {
+			time.Sleep(300 * time.Millisecond)
+			// The prompt may have moved on during the pause: the rest is for that one only.
+			cur, err := a.liveTask(id)
+			if err != nil || cur.RunID != t.RunID || cur.TmuxPane != t.TmuxPane || (waitingID != "" && WaitingID(cur) != waitingID) {
+				return fmt.Errorf("%s no longer asks that: it moved on", t.Name)
+			}
+		}
+		if len(run) == 3 {
+			continue
+		}
+		if _, err = a.T.Run(run...); err != nil {
+			return err
+		}
 	}
-	// Claude reports nothing when its prompt is cancelled: it is back at its input, waiting for you.
-	if waitingID != "" && t.Agent == "claude" && len(keys) == 1 && strings.EqualFold(keys[0], "esc") {
+	// An agent that reports nothing when its prompt is cancelled is back at its input, waiting for you.
+	if ag, err := agent.Get(t.Agent); err == nil && !ag.CancelReported() && waitingID != "" && len(keys) == 1 && strings.EqualFold(keys[0], "esc") {
 		return a.SetPhase(id, store.PhaseIdle)
 	}
 	return nil

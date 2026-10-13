@@ -22,6 +22,19 @@ export type Task = {
   run_state: 'starting' | 'live' | 'exited'
   waiting?: Waiting
   waiting_id?: string // what an answer to the current prompt must carry
+  answers?: Answers // the agent's keys for its prompts; a missing one is an answer it doesn't offer
+}
+
+export type Answers = {
+  options?: string[][] // the current question's option i
+  own?: string[] // then type your own answer
+  steps?: string[] // several questions or answers: keys to step through them
+  yes?: string[]
+  always?: string[]
+  no?: string[]
+  cancel?: string[]
+  trust?: string[]
+  exit?: string[]
 }
 
 // What a waiting agent asks: a permission (tool and command) or questions with options.
@@ -62,6 +75,7 @@ export const api = {
     if (!res.ok) throw new Error(data.error || res.statusText)
     return data
   },
+  agents: () => call<string[]>('/api/agents'),
   dirs: (path = '') => call<Dirs>(`/api/dirs?path=${encodeURIComponent(path)}`),
   newTask: (body: { cwd: string; prompt: string; agent: string; stack: string }) => call<{ id: string }>('/api/new', body),
   // guard: the prompt the keys answer (waiting_id), or the folder trust prompt; refused if the

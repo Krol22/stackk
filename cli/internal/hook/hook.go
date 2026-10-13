@@ -2,20 +2,17 @@
 package hook
 
 import (
-	"bufio"
 	"encoding/json"
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
+	agentpkg "github.com/krol22/stackk/cli/internal/agent"
 	"github.com/krol22/stackk/cli/internal/safe"
-	"github.com/krol22/stackk/cli/internal/sessions"
 	"github.com/krol22/stackk/cli/internal/store"
 )
 
-// Payload is Claude Code's hook input; the omp extension sends the same shape.
+// Payload is Claude Code's hook input, the shape every agent reports in (omp's extension too).
 type Payload struct {
 	HookEventName        string          `json:"hook_event_name"`
 	SessionID            string          `json:"session_id"`
@@ -54,10 +51,14 @@ func Parse(agent string, raw []byte) (store.Event, Payload, bool) {
 			return store.Event{}, p, false
 		}
 	}
-	// omp runs subagents in its own process and reports them like its main session, with the
-	// subagent's session and transcript: tell them apart by the file, and keep the main ones.
-	if agent == "omp" && p.AgentID == "" {
-		if _, sub := sessions.OmpMain(p.TranscriptPath); sub {
+	ag, _ := agentpkg.Get(agent)
+	if ag == nil {
+		ag = agentpkg.All()[0]
+	}
+	// An agent may run subagents in its own process and report them like its main session (omp
+	// does), with the subagent's transcript: tell them apart by the file, and keep the main ones.
+	if p.AgentID == "" && p.TranscriptPath != "" {
+		if _, sub := ag.MainSession(p.TranscriptPath); sub {
 			p.AgentID = strings.TrimSuffix(filepath.Base(p.TranscriptPath), ".jsonl")
 			p.SessionID, p.TranscriptPath = "", ""
 		}
@@ -77,24 +78,30 @@ func Parse(agent string, raw []byte) (store.Event, Payload, bool) {
 		ev.Kind, ev.StartSource = "start", p.Source
 	case "UserPromptSubmit":
 		ev.Kind, ev.Msg = "prompt", OneLine(p.Prompt)
+		if keys, answer := ag.Answered(p.Prompt); len(keys) > 0 {
+			ev.Answered, ev.Msg = keys, "answered: "+OneLine(answer)
+		}
 	case "Stop":
 		ev.Kind = "stop"
 		if p.subagentsRunning() {
 			ev.Kind = "stop_bg" // the turn ended but subagents work on in the background
 		}
 		msg := p.LastAssistantMessage
-		if msg == "" && agent == "claude" {
-			msg = lastAssistantText(p.TranscriptPath)
+		if msg == "" {
+			msg = ag.LastText(p.TranscriptPath)
 		}
 		ev.Msg = OneLine(msg)
 	case "StopFailure":
 		ev.Kind, ev.Msg = "fail", OneLine(p.Error)
 	case "PermissionRequest", "PreToolUse":
 		// Claude also asks permission for AskUserQuestion: that is the question, not a yes/no.
-		if p.ToolName == "AskUserQuestion" {
+		if q, async, ok := ag.Question(p.ToolName, p.ToolInput); ok {
 			ev.Kind, ev.WaitingKind = "wait", "question"
-			ev.Msg = "question: " + question(p.ToolInput)
-			ev.Detail = questionDetail(p.ToolInput)
+			if async { // posted, the turn goes on: it waits for you apart from the turn
+				ev.Kind, ev.WaitingKind = "ask", ""
+			}
+			ev.Msg = "question: " + question(q)
+			ev.Detail = questionDetail(q)
 		} else if p.HookEventName == "PermissionRequest" {
 			ev.Kind, ev.WaitingKind = "wait", "permission"
 			ev.Msg = "permission: " + ToolSummary(p.ToolName, p.ToolInput)
@@ -103,6 +110,9 @@ func Parse(agent string, raw []byte) (store.Event, Payload, bool) {
 			return ev, p, false
 		}
 	case "PostToolUse", "PostToolUseFailure":
+		if _, async, ok := ag.Question(p.ToolName, p.ToolInput); ok && async {
+			return ev, p, false // the question was only posted: the answer comes as a prompt
+		}
 		ev.Kind, ev.Tool = "tool_done", ToolSummary(p.ToolName, p.ToolInput)
 	case "SessionEnd":
 		ev.Kind = "end"
@@ -206,47 +216,4 @@ func OneLine(s string) string {
 		return line
 	}
 	return ""
-}
-
-// lastAssistantText reads the tail of a Claude transcript and returns the last assistant text block.
-func lastAssistantText(path string) string {
-	if path == "" {
-		return ""
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	const tail = 256 << 10
-	if st, err := f.Stat(); err == nil && st.Size() > tail {
-		f.Seek(-tail, io.SeekEnd)
-	}
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), 8<<20)
-	last := ""
-	for sc.Scan() {
-		var line struct {
-			Type    string `json:"type"`
-			Message struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal(sc.Bytes(), &line) != nil || line.Type != "assistant" {
-			continue
-		}
-		var blocks []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		if json.Unmarshal(line.Message.Content, &blocks) != nil {
-			continue
-		}
-		for _, b := range blocks {
-			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-				last = b.Text
-			}
-		}
-	}
-	return last
 }

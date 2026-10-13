@@ -1,4 +1,4 @@
-package setup
+package agent
 
 import (
 	"encoding/json"
@@ -13,10 +13,10 @@ func TestClaudeHooksAreAddedOnceAndKeepOthers(t *testing.T) {
 	os.WriteFile(path, []byte(`{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"other-tool"}]}]}}`), 0o600)
 	var log []string
 	out := func(s string) { log = append(log, s) }
-	if err := claude(path, "/bin/stackk", out); err != nil {
+	if err := installClaudeHooks(path, "/bin/stackk", out); err != nil {
 		t.Fatal(err)
 	}
-	if err := claude(path, "/bin/stackk", out); err != nil { // second run: no change
+	if err := installClaudeHooks(path, "/bin/stackk", out); err != nil { // second run: no change
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(path)
@@ -41,7 +41,7 @@ func TestOmpExtensionGetsBinaryPath(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "agent", "extensions")
 	os.MkdirAll(dir, 0o755)
 	path := filepath.Join(dir, "stackk.ts")
-	if err := omp(path, "/opt/stackk", func(string) {}); err != nil {
+	if err := installOmpExtension(path, "/opt/stackk", func(string) {}); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(path)
@@ -53,7 +53,7 @@ func TestOmpExtensionGetsBinaryPath(t *testing.T) {
 func TestClaudeSettingsKeepTheirMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	os.WriteFile(path, []byte(`{}`), 0o600)
-	if err := claude(path, "/bin/stackk", func(string) {}); err != nil {
+	if err := installClaudeHooks(path, "/bin/stackk", func(string) {}); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {

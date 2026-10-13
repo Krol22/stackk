@@ -179,6 +179,7 @@ func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/tasks", s.tasks)
 	mux.HandleFunc("GET /api/dirs", s.dirs)
+	mux.HandleFunc("GET /api/agents", s.agents)
 	mux.HandleFunc("POST /api/new", s.newTask)
 	mux.HandleFunc("GET /api/tasks/{id}/screen", s.screen)
 	mux.HandleFunc("GET /api/tasks/{id}/transcript", s.transcript)
@@ -439,7 +440,16 @@ func (s *server) dirs(w http.ResponseWriter, r *http.Request) {
 	s.reply(w, out, err)
 }
 
-var stackRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+// agents lists the agents stackk can start, the default first.
+func (s *server) agents(w http.ResponseWriter, r *http.Request) {
+	out, err := s.run(r.Context(), "", "agents", "-json")
+	s.reply(w, out, err)
+}
+
+var (
+	stackRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+	agentRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`) // stackk new refuses one it doesn't know
+)
 
 // newTask starts a session in a folder picked with dirs: `stackk dirs` vets it first (only your
 // home folder), then `stackk new` starts the agent.
@@ -454,10 +464,7 @@ func (s *server) newTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad JSON", http.StatusBadRequest)
 		return
 	}
-	if body.Agent == "" {
-		body.Agent = "claude"
-	}
-	if body.Cwd == "" || !folder(body.Cwd) || (body.Agent != "claude" && body.Agent != "omp") ||
+	if body.Cwd == "" || !folder(body.Cwd) || (body.Agent != "" && !agentRe.MatchString(body.Agent)) ||
 		(body.Stack != "" && !stackRe.MatchString(body.Stack)) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -466,7 +473,10 @@ func (s *server) newTask(w http.ResponseWriter, r *http.Request) {
 		s.reply(w, nil, err)
 		return
 	}
-	args := []string{"new", "-agent", body.Agent}
+	args := []string{"new"}
+	if body.Agent != "" {
+		args = append(args, "-agent", body.Agent)
+	}
 	if body.Stack != "" {
 		args = append(args, "-stack", body.Stack)
 	}

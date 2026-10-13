@@ -7,15 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/krol22/stackk/cli/internal/agent"
 	"github.com/krol22/stackk/cli/internal/hook"
 	"github.com/krol22/stackk/cli/internal/safe"
-	"github.com/krol22/stackk/cli/internal/sessions"
 	"github.com/krol22/stackk/cli/internal/store"
 	"github.com/krol22/stackk/cli/internal/tmux"
 )
@@ -272,22 +272,12 @@ func (a *App) Candidates() ([]tmux.Pane, error) {
 
 // --- tasks ---
 
-func agentArgv(agent, prompt, resume string) ([]string, error) {
-	bin, err := exec.LookPath(agent)
+func agentArgv(name, prompt, ref string) ([]string, error) {
+	a, err := agent.Get(name)
 	if err != nil {
-		return nil, fmt.Errorf("%s not found in PATH", agent)
+		return nil, err
 	}
-	argv := []string{bin}
-	if resume != "" {
-		argv = append(argv, "--resume", resume)
-	}
-	if prompt != "" {
-		if strings.HasPrefix(prompt, "-") { // a prompt, never an option of the agent's
-			prompt = " " + prompt
-		}
-		argv = append(argv, prompt)
-	}
-	return argv, nil
+	return a.Argv(prompt, ref)
 }
 
 // shellArgs runs argv through the user's shell (its config sets PATH and env) with exec, so the
@@ -389,10 +379,11 @@ func (a *App) Resume(id string) (store.Task, error) {
 		if t.RunState != store.RunExited {
 			return fmt.Errorf("%s is already running", t.Name)
 		}
-		ref := t.AgentSessionID
-		if t.Agent == "omp" && t.SessionPath != "" {
-			ref, _ = sessions.OmpMain(t.SessionPath) // never a subagent's file
+		a, err := agent.Get(t.Agent)
+		if err != nil {
+			return err
 		}
+		ref := a.ResumeRef(t.AgentSessionID, t.SessionPath)
 		if ref == "" {
 			return fmt.Errorf("%s: no conversation id, nothing to resume", t.Name)
 		}
@@ -592,4 +583,33 @@ func expandHome(p string) string {
 		return filepath.Join(home, strings.TrimPrefix(p, "~"))
 	}
 	return p
+}
+
+// RecentDirs are where sessions started lately, newest first, for starting the next one: folders
+// that still exist, and no git worktrees (you start from the main checkout and branch off there).
+func RecentDirs(tasks []store.Task, n int) []string {
+	ts := append([]store.Task(nil), tasks...)
+	sort.Slice(ts, func(i, j int) bool { return ts[i].CreatedAt > ts[j].CreatedAt })
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range ts {
+		if len(out) == n {
+			break
+		}
+		if t.Cwd == "" || seen[t.Cwd] {
+			continue
+		}
+		seen[t.Cwd] = true
+		if st, err := os.Stat(t.Cwd); err != nil || !st.IsDir() || isWorktree(t.Cwd) {
+			continue
+		}
+		out = append(out, t.Cwd)
+	}
+	return out
+}
+
+// isWorktree: a linked worktree's .git is a file, "gitdir: <repo>/.git/worktrees/<name>".
+func isWorktree(dir string) bool {
+	b, err := os.ReadFile(filepath.Join(dir, ".git"))
+	return err == nil && strings.HasPrefix(string(b), "gitdir:") && strings.Contains(string(b), "/worktrees/")
 }

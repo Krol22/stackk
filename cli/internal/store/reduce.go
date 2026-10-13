@@ -1,5 +1,11 @@
 package store
 
+import (
+	"encoding/json"
+	"slices"
+	"strconv"
+)
+
 const (
 	PhaseWorking = "working"
 	PhaseIdle    = "idle"
@@ -14,7 +20,7 @@ const (
 
 // Event is a normalized agent or user event.
 type Event struct {
-	Kind           string // start, prompt, stop, fail, wait, tool_done, end, unknown, mark_idle, mark_working
+	Kind           string // start, prompt, stop, fail, wait, ask, tool_done, end, unknown, mark_idle, mark_working
 	Source         string // claude, omp, ty, reconcile
 	RunID          string
 	StartSource    string // SessionStart source: startup, resume, clear, compact
@@ -24,7 +30,8 @@ type Event struct {
 	Tool           string
 	ToolUseID      string
 	WaitingKind    string
-	Detail         string // wait: what is asked, as JSON
+	Detail         string   // wait, ask: what is asked, as JSON
+	Answered       []string // prompt: the pending questions it answers (AskKey)
 }
 
 // The list a task shows up in. Hidden and paused are out of every list (the ⏸ modal),
@@ -61,7 +68,41 @@ func InStack(t *Task) bool {
 		return false
 	}
 	// Anything we cannot classify as running stays on the stack, shells included.
-	return t.Phase == PhaseIdle || t.Phase == PhaseWaiting || t.Phase == PhaseUnknown || t.Phase == PhaseShell
+	return t.Phase == PhaseIdle || t.Phase == PhaseWaiting || t.Phase == PhaseUnknown || t.Phase == PhaseShell || t.PendingAsk != ""
+}
+
+// askItem is one pending question: which call posted it, and the question with its options.
+type askItem struct {
+	Key      string          `json:"key"`
+	Question json.RawMessage `json:"question"`
+}
+
+// AskKey names question i of the tool call that posted it, as an agent reports its answer.
+func AskKey(toolUseID string, i int) string { return toolUseID + "#" + strconv.Itoa(i) }
+
+func pending(t *Task) []askItem {
+	var items []askItem
+	json.Unmarshal([]byte(t.PendingAsk), &items)
+	return items
+}
+
+func setPending(t *Task, items []askItem) {
+	t.PendingAsk = ""
+	if len(items) > 0 {
+		b, _ := json.Marshal(items)
+		t.PendingAsk = string(b)
+	}
+}
+
+// PendingQuestion is the first question still waiting for an answer, as a waiting detail
+// ({questions: [q]}), or nil.
+func PendingQuestion(t Task) json.RawMessage {
+	items := pending(&t)
+	if len(items) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(map[string][]json.RawMessage{"questions": {items[0].Question}})
+	return b
 }
 
 // StackLess orders the stack: priority tasks first, each group in the order it came back.
@@ -106,6 +147,9 @@ func Reduce(t *Task, ev Event, now int64) bool {
 	}
 	switch ev.Kind {
 	case "start":
+		if ev.StartSource != "compact" {
+			setPending(t, nil) // questions belong to the conversation that asked them
+		}
 		t.RunState = RunLive
 		t.Error = ""
 		if ev.AgentSessionID != "" {
@@ -119,6 +163,15 @@ func Reduce(t *Task, ev Event, now int64) bool {
 			setPhase(t, PhaseIdle, now)
 		}
 	case "prompt":
+		if len(ev.Answered) > 0 {
+			var left []askItem
+			for _, it := range pending(t) {
+				if !slices.Contains(ev.Answered, it.Key) {
+					left = append(left, it)
+				}
+			}
+			setPending(t, left)
+		}
 		t.RunState = RunLive
 		setPhase(t, PhaseWorking, now)
 		if ev.Msg != "" {
@@ -149,6 +202,19 @@ func Reduce(t *Task, ev Event, now int64) bool {
 		if ev.Msg != "" {
 			t.LastMsg = ev.Msg
 		}
+	case "ask":
+		var in struct {
+			Questions []json.RawMessage `json:"questions"`
+		}
+		json.Unmarshal([]byte(ev.Detail), &in)
+		items := pending(t)
+		for i, q := range in.Questions {
+			items = append(items, askItem{AskKey(ev.ToolUseID, i), q})
+		}
+		setPending(t, items)
+		if ev.Msg != "" {
+			t.LastMsg = ev.Msg
+		}
 	case "tool_done":
 		if ev.Tool != "" {
 			t.LastTool = ev.Tool
@@ -164,6 +230,7 @@ func Reduce(t *Task, ev Event, now int64) bool {
 			setPhase(t, PhaseWorking, now)
 		}
 	case "end":
+		setPending(t, nil)
 		// The agent quit; its window may live on as a shell. Reconcile marks the run exited once the pane is gone.
 		setPhase(t, PhaseShell, now)
 	case "unknown":

@@ -106,8 +106,8 @@ func AI(all []Session, query string, limit int) ([]Hit, error) {
 		if len(h.Prompts) > 0 {
 			first, last = h.Prompts[0], h.Prompts[len(h.Prompts)-1]
 		}
-		fmt.Fprintf(&b, "%d. %s | %s | %s | %s | %s\n", i+1, clip(h.Title, 80), filepath.Base(h.Cwd), h.Modified.Format("01-02"),
-			clip(first, 110), clip(last, 80))
+		fmt.Fprintf(&b, "%d. %s | %s | %s | %s | %s\n", i+1, Clip(h.Title, 80), filepath.Base(h.Cwd), h.Modified.Format("01-02"),
+			Clip(first, 110), Clip(last, 80))
 	}
 	fmt.Fprintf(&b, "\nReply with only a JSON array of the numbers of sessions that match, best match first, at most %d. Reply [] if none match.\n", limit)
 	out, err := runModel(b.String())
@@ -194,7 +194,7 @@ var arrayRe = regexp.MustCompile(`\[[\d\s,]*\]`)
 func parseNumbers(s string) ([]int, error) {
 	m := arrayRe.FindString(s)
 	if m == "" {
-		return nil, fmt.Errorf("no JSON array in %q", clip(s, 120))
+		return nil, fmt.Errorf("no JSON array in %q", Clip(s, 120))
 	}
 	var ids []int
 	return ids, json.Unmarshal([]byte(m), &ids)
