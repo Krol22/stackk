@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -355,17 +354,8 @@ func dirsCmd(app *core.App, args []string) error {
 	}
 	if dir == home { // where your sessions ran lately, newest first
 		tasks, _ := store.Tasks(app.DB, "")
-		sort.Slice(tasks, func(i, j int) bool { return tasks[i].CreatedAt > tasks[j].CreatedAt })
-		seen := map[string]bool{}
-		for _, t := range tasks {
-			if t.Cwd == "" || seen[t.Cwd] || len(out.Recent) == 8 {
-				continue
-			}
-			if st, err := os.Stat(t.Cwd); err != nil || !st.IsDir() {
-				continue
-			}
-			seen[t.Cwd] = true
-			out.Recent = append(out.Recent, dirEntry{Name: filepath.Base(t.Cwd), Path: t.Cwd})
+		for _, d := range core.RecentDirs(tasks, 8) {
+			out.Recent = append(out.Recent, dirEntry{Name: filepath.Base(d), Path: d})
 		}
 	}
 	if *asJSON {

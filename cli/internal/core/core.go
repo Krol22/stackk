@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -582,4 +583,33 @@ func expandHome(p string) string {
 		return filepath.Join(home, strings.TrimPrefix(p, "~"))
 	}
 	return p
+}
+
+// RecentDirs are where sessions started lately, newest first, for starting the next one: folders
+// that still exist, and no git worktrees (you start from the main checkout and branch off there).
+func RecentDirs(tasks []store.Task, n int) []string {
+	ts := append([]store.Task(nil), tasks...)
+	sort.Slice(ts, func(i, j int) bool { return ts[i].CreatedAt > ts[j].CreatedAt })
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range ts {
+		if len(out) == n {
+			break
+		}
+		if t.Cwd == "" || seen[t.Cwd] {
+			continue
+		}
+		seen[t.Cwd] = true
+		if st, err := os.Stat(t.Cwd); err != nil || !st.IsDir() || isWorktree(t.Cwd) {
+			continue
+		}
+		out = append(out, t.Cwd)
+	}
+	return out
+}
+
+// isWorktree: a linked worktree's .git is a file, "gitdir: <repo>/.git/worktrees/<name>".
+func isWorktree(dir string) bool {
+	b, err := os.ReadFile(filepath.Join(dir, ".git"))
+	return err == nil && strings.HasPrefix(string(b), "gitdir:") && strings.Contains(string(b), "/worktrees/")
 }

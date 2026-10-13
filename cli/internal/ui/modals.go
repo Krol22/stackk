@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/krol22/stackk/cli/internal/agent"
+	"github.com/krol22/stackk/cli/internal/core"
 	"github.com/krol22/stackk/cli/internal/store"
 	zone "github.com/lrstanley/bubblezone"
 )
@@ -113,22 +113,7 @@ func (m *stackModel) viewTake(w int) string {
 
 // --- new task form ---
 
-func (m *stackModel) recentDirs() []string {
-	seen := map[string]bool{}
-	var out []string
-	ts := append([]store.Task(nil), m.tasks...)
-	sort.Slice(ts, func(i, j int) bool { return ts[i].CreatedAt > ts[j].CreatedAt })
-	for _, t := range ts {
-		if t.Cwd != "" && !seen[t.Cwd] {
-			seen[t.Cwd] = true
-			out = append(out, t.Cwd)
-		}
-		if len(out) == 5 {
-			break
-		}
-	}
-	return out
-}
+func (m *stackModel) recentDirs() []string { return core.RecentDirs(m.tasks, 5) }
 
 func (m *stackModel) openForm() {
 	f := &formState{agent: agent.Names()[0]}
