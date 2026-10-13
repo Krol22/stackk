@@ -182,3 +182,15 @@ func TestTxRollsBackOnPanic(t *testing.T) {
 		t.Fatalf("next transaction blocked: %v", err)
 	}
 }
+
+func TestStackLessPutsPriorityFirst(t *testing.T) {
+	a := Task{ID: "a", QueuedAt: 1}
+	b := Task{ID: "b", QueuedAt: 2, Priority: true}
+	c := Task{ID: "c", QueuedAt: 3, Priority: true}
+	if !StackLess(b, a) || StackLess(a, b) {
+		t.Fatal("a priority task goes before one that came back earlier")
+	}
+	if !StackLess(b, c) || StackLess(c, b) {
+		t.Fatal("priority tasks keep the order they came back in")
+	}
+}

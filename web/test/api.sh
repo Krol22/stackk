@@ -14,7 +14,7 @@ post() { curl -s -X POST -H 'Content-Type: application/json' "$U$1" -d "$2"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 mkdir -p "$S/work/alpha"; sk new -stack work -name alpha "$S/work/alpha" >/dev/null; sleep 4
 ID=$(idof alpha)
-field() { get /api/tasks | python3 -c 'import json,sys; print([t[sys.argv[2]] for t in json.load(sys.stdin) if t["name"]==sys.argv[1]][0])' "$1" "$2"; }
+field() { get /api/tasks | python3 -c 'import json,sys; print([t.get(sys.argv[2]) for t in json.load(sys.stdin) if t["name"]==sys.argv[1]][0])' "$1" "$2"; }
 
 step "the app and the task list"
 check "the app is served" 'get / | grep -q "<div id=\"app\">"'
@@ -60,6 +60,12 @@ check "renamed, window too, a name that looks like a flag included" 'sk ls -json
 post "/api/tasks/$ID/rename" '{"name":"alpha"}' >/dev/null; sleep 2
 check "and back" '[ "$(field alpha view)" != "" ]'
 check "an empty name is refused" '[ "$(code -X POST -H "Content-Type: application/json" "$U/api/tasks/$ID/rename" -d "{\"name\":\" \"}")" = 400 ]'
+
+step "priority"
+post "/api/tasks/$ID/priority" '{}' >/dev/null; sleep 1
+check "on" '[ "$(field alpha priority)" = True ]'
+post "/api/tasks/$ID/unpriority" '{}' >/dev/null; sleep 1
+check "off" '[ "$(field alpha priority)" != True ]'
 
 step "hide, unhide, close & remove"
 post "/api/tasks/$ID/hide" '{}' >/dev/null; sleep 1

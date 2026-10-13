@@ -17,6 +17,7 @@ export type Task = {
   error?: string
   phase_since: number
   queued_at: number
+  priority?: boolean
   created_at: number
   run_state: 'starting' | 'live' | 'exited'
   waiting?: Waiting
@@ -67,7 +68,7 @@ export const api = {
   // agent moved on meanwhile.
   keys: (id: string, keys: string[], guard: { waiting?: string; trust?: boolean } = {}) =>
     call(`/api/tasks/${encodeURIComponent(id)}/key`, { keys, if_waiting: guard.waiting ?? '', if_trust: !!guard.trust }),
-  action: (id: string, action: 'pause' | 'resume' | 'hide' | 'unhide' | 'rm') => call(`/api/tasks/${encodeURIComponent(id)}/${action}`, {}),
+  action: (id: string, action: 'pause' | 'resume' | 'hide' | 'unhide' | 'priority' | 'unpriority' | 'rm') => call(`/api/tasks/${encodeURIComponent(id)}/${action}`, {}),
 }
 
 export function ago(ts: number, now = Date.now()): string {

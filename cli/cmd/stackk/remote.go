@@ -39,6 +39,7 @@ type taskJSON struct {
 	Error          string          `json:"error,omitempty"`
 	PhaseSince     int64           `json:"phase_since"`
 	QueuedAt       int64           `json:"queued_at"`
+	Priority       bool            `json:"priority,omitempty"`
 	CreatedAt      int64           `json:"created_at"`
 	RunState       string          `json:"run_state"` // starting, live, exited
 	AgentSessionID string          `json:"agent_session_id,omitempty"`
@@ -49,7 +50,7 @@ type taskJSON struct {
 func toJSON(t store.Task, stackNames map[string]string) taskJSON {
 	return taskJSON{ID: t.ID, Name: t.Name, Stack: t.Stack, StackName: stackNames[t.Stack], View: store.View(t),
 		Phase: t.Phase, WaitingKind: t.WaitingKind, Agent: t.Agent, Cwd: t.Cwd, LastMsg: t.LastMsg, LastTool: t.LastTool,
-		LastToolAt: t.LastToolAt, Note: t.Note, Error: t.Error, PhaseSince: t.PhaseSince, QueuedAt: t.QueuedAt,
+		LastToolAt: t.LastToolAt, Note: t.Note, Error: t.Error, PhaseSince: t.PhaseSince, QueuedAt: t.QueuedAt, Priority: t.Priority,
 		CreatedAt: t.CreatedAt, RunState: t.RunState, AgentSessionID: t.AgentSessionID, Pane: t.TmuxPane, Window: t.HomeWindow,
 		Waiting: waitingJSON(t), WaitingID: core.WaitingID(t)}
 }

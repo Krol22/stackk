@@ -4,7 +4,7 @@
 
   let { tasks, error }: { tasks: Task[]; error: string } = $props()
 
-  let stack = $derived(tasks.filter((t) => t.view === 'stack').sort((a, b) => a.queued_at - b.queued_at))
+  let stack = $derived(tasks.filter((t) => t.view === 'stack').sort((a, b) => Number(!!b.priority) - Number(!!a.priority) || a.queued_at - b.queued_at))
   let running = $derived(tasks.filter((t) => t.view === 'running').sort((a, b) => a.phase_since - b.phase_since))
   let scheduled = $derived(tasks.filter((t) => t.view === 'deferred' || t.view === 'exited'))
   let paused = $derived(tasks.filter((t) => t.view === 'paused'))
@@ -57,7 +57,7 @@
 {#snippet row(t: Task)}
   <a class="task" class:waiting={t.phase === 'waiting'} href="#/t/{encodeURIComponent(t.id)}">
     <span class="top">
-      <span class="name">{t.name}</span>
+      <span class="name">{#if t.priority}<span class="prio">!</span> {/if}{t.name}</span>
       <span class="age">{ago(t.view === 'running' ? t.phase_since : t.queued_at || t.phase_since, now)}</span>
     </span>
     <span class="sub">
@@ -200,6 +200,7 @@
   .task.waiting { border-left-color: var(--accent); background: var(--raised); }
   .top { display: flex; gap: 1ch; }
   .name { color: var(--bright); font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .prio { color: var(--red); }
   .age { color: var(--dim); }
   .sub { display: block; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status { color: var(--dim); margin-right: 1ch; }

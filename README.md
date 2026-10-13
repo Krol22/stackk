@@ -45,7 +45,7 @@ stackk main     # or: turn an existing session (all its windows) into the stack
 ```
 
 - **Left click** a session to open it in the drawer. Clicking the dashboard closes it, clicking another session switches to it, and dragging the border resizes it.
-- **Right click** (or `…`) for Schedule, Pause, Hide, Skip, Rename, Note, Stop, Close & remove.
+- **Right click** (or `…`) for Schedule, Priority (first on the stack whenever it comes back), Pause, Hide, Skip, Rename, Note, Stop, Close & remove.
 - **next ▶** opens the session at the head of the stack.
 - **+ new** starts a session in a folder, optionally with a first prompt.
 - **⌕ find** puts a past session back on the stack.
@@ -81,7 +81,7 @@ Running dashboards follow within a few seconds. The choice is saved in `~/.confi
 
 ![stackk mobile](docs/mobile.png)
 
-CLI: `stackk ls [-json]`, `stackk show|send|key <task>`, `stackk log [task]`, `stackk new <folder> [prompt]`, `stackk take`, `stackk find [-ai] <query>`, `stackk attach <session>`, `stackk pause|resume|hide|unhide|rm|rename <task>`, `stackk focus [task]`, `stackk theme [<name>]`, `stackk test-notify`.
+CLI: `stackk ls [-json]`, `stackk show|send|key <task>`, `stackk log [task]`, `stackk new <folder> [prompt]`, `stackk take`, `stackk find [-ai] <query>`, `stackk attach <session>`, `stackk pause|resume|hide|unhide|priority|unpriority|rm|rename <task>`, `stackk focus [task]`, `stackk theme [<name>]`, `stackk test-notify`.
 
 ## How it works
 

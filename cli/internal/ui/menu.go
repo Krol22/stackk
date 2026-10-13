@@ -34,6 +34,11 @@ func (m *stackModel) openMenu(t store.Task, x, y int) {
 	case "exited":
 		add("resume", "Resume")
 	}
+	if t.Priority {
+		add("unpriority", "Priority: off")
+	} else {
+		add("priority", "Priority: on")
+	}
 	add("pause", "Pause")
 	add("hide", "Hide (not a task)")
 	add("-", "")
