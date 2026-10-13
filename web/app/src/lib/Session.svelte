@@ -205,6 +205,11 @@
       {:else}
         <button disabled={busy} onclick={() => { menu = false; act(() => api.action(id, 'pause')) }}>pause</button>
       {/if}
+      {#if task?.priority}
+        <button disabled={busy} onclick={() => { menu = false; act(() => api.action(id, 'unpriority')) }}>priority: off</button>
+      {:else}
+        <button disabled={busy} onclick={() => { menu = false; act(() => api.action(id, 'priority')) }}>priority <span class="hint">first on the stack</span></button>
+      {/if}
       {#if renaming === null}
         <button disabled={busy} onclick={() => (renaming = task?.name ?? '')}>rename</button>
       {:else}

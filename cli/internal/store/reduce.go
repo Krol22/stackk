@@ -64,6 +64,14 @@ func InStack(t *Task) bool {
 	return t.Phase == PhaseIdle || t.Phase == PhaseWaiting || t.Phase == PhaseUnknown || t.Phase == PhaseShell
 }
 
+// StackLess orders the stack: priority tasks first, each group in the order it came back.
+func StackLess(a, b Task) bool {
+	if a.Priority != b.Priority {
+		return a.Priority
+	}
+	return a.QueuedAt < b.QueuedAt
+}
+
 func setPhase(t *Task, phase string, now int64) {
 	if t.Phase != phase {
 		t.Phase = phase

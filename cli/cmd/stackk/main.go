@@ -40,6 +40,7 @@ const usage = `stackk — a round-robin stack of AI sessions in tmux
   stackk resume <task>                bring back a paused session / restart a finished one
   stackk pause <task>                 hide a session (it keeps running)
   stackk hide|unhide <task>           take a window that is not a task out of the lists
+  stackk priority|unpriority <task>   put a task first on the stack whenever it is there
   stackk rm <task>                    close the task's window and remove it for good
   stackk rename <task> <name>         rename a task and its window
   stackk theme [<name>]               list the color themes, or pick one
@@ -134,6 +135,11 @@ func main() {
 			die(fmt.Errorf("stackk %s <task>", cmd))
 		}
 		err = app.SetHidden(taskArg(app, args, cmd+" <task>").ID, cmd == "hide")
+	case "priority", "unpriority":
+		if len(args) != 1 {
+			die(fmt.Errorf("stackk %s <task>", cmd))
+		}
+		err = app.SetPriority(taskArg(app, args, cmd+" <task>").ID, cmd == "priority")
 	case "rm":
 		if len(args) != 1 {
 			die(fmt.Errorf("stackk rm <task>"))

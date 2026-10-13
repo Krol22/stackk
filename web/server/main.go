@@ -483,15 +483,15 @@ func (s *server) newTask(w http.ResponseWriter, r *http.Request) {
 	s.reply(w, b, nil)
 }
 
-// action runs the task commands that take nothing else: pause, resume, hide, unhide, and rm
-// (close the window, remove the task for good).
+// action runs the task commands that take nothing else: pause, resume, hide, unhide, priority,
+// unpriority and rm (close the window, remove the task for good).
 func (s *server) action(w http.ResponseWriter, r *http.Request) {
 	id, ok := taskID(w, r)
 	if !ok {
 		return
 	}
 	switch a := r.PathValue("action"); a {
-	case "pause", "resume", "hide", "unhide", "rm":
+	case "pause", "resume", "hide", "unhide", "priority", "unpriority", "rm":
 		out, err := s.run(r.Context(), "", a, id)
 		s.reply(w, out, err)
 	default:

@@ -75,6 +75,8 @@ func (m *stackModel) act(id, action string) tea.Cmd {
 		return m.offDrawer(id, do("hid "+t.Name, func() error { return app.SetHidden(id, true) }))
 	case "kill":
 		return m.offDrawer(id, do("removed "+t.Name, func() error { return app.Remove(id) }))
+	case "priority", "unpriority":
+		return do("", func() error { return app.SetPriority(id, action == "priority") })()
 	case "restore":
 		return do(t.Name+" is back", func() error { return app.SetDeferred(id, false) })()
 	case "mark_idle":

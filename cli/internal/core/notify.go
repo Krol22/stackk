@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/krol22/stackk/cli/internal/safe"
@@ -58,6 +59,7 @@ func (n *Notifier) Check(a *App, stack, uiPane, out string) {
 			due = append(due, t)
 		}
 	}
+	sort.Slice(due, func(i, j int) bool { return store.StackLess(due[i], due[j]) })
 	if len(due) == 0 || now-n.lastSent < notifyInterval {
 		return
 	}

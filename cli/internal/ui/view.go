@@ -25,7 +25,7 @@ func (m *stackModel) sorted(view string) []store.Task {
 	sort.SliceStable(out, func(i, j int) bool {
 		switch view {
 		case "stack":
-			return out[i].QueuedAt < out[j].QueuedAt
+			return store.StackLess(out[i], out[j])
 		case "running":
 			return out[i].PhaseSince < out[j].PhaseSince
 		}
@@ -167,6 +167,9 @@ func (m *stackModel) taskRows(t store.Task, view string, pos int, w int) []strin
 	markTxt, markSt := m.mark(t)
 	age := ago(t.PhaseSince)
 	nameW := max(8, w-4-9-3-6-4)
+	if view == "stack" { // the second line says what it waits for; the order says how long
+		nameW += 3 + 6
+	}
 	leadSt := st(sGrey)
 	if view == "stack" {
 		leadSt = st(sYellow.Bold(true))
@@ -178,12 +181,18 @@ func (m *stackModel) taskRows(t store.Task, view string, pos int, w int) []strin
 			leadSt = st(sDim)
 		}
 	}
+	name := st(sBright).Render(fit(t.Name, nameW))
+	if t.Priority {
+		name = st(sYellow).Render("★ ") + st(sBright).Render(fit(t.Name, nameW-2))
+	}
 	line1 := leadSt.Render(" "+lead+" ") +
-		st(sBright).Render(fit(t.Name, nameW)) + st(sText).Render(" ") +
-		st(agentStyle(t.Agent)).Render(fit(agentLabel(t.Agent), 8)) + st(sText).Render(" ") +
-		st(markSt).Render(fit(markTxt, 2)) + st(sText).Render(" ") +
-		st(sGrey).Render(fit(fmt.Sprintf("%5s", age), 6)) +
-		zone.Mark("x:"+t.ID, st(sGrey).Render(" … "))
+		name + st(sText).Render(" ") +
+		st(agentStyle(t.Agent)).Render(fit(agentLabel(t.Agent), 8))
+	if view != "stack" {
+		line1 += st(sText).Render(" ") + st(markSt).Render(fit(markTxt, 2)) + st(sText).Render(" ") +
+			st(sGrey).Render(fit(fmt.Sprintf("%5s", age), 6))
+	}
+	line1 += zone.Mark("x:"+t.ID, st(sGrey).Render(" … "))
 	line1 = padRight(line1, w)
 	text, ds := m.detail(t, view)
 	line2 := st(ds).Render(fit("     "+text, w))

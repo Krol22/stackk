@@ -525,6 +525,18 @@ func (a *App) Rename(id, name string) error {
 	return a.syncWindowName(id)
 }
 
+// SetPriority puts a task first on the stack whenever it is there.
+func (a *App) SetPriority(id string, on bool) error {
+	ev := "unpriority"
+	if on {
+		ev = "priority"
+	}
+	return a.update(id, ev, "", func(t *store.Task, now int64) error {
+		t.Priority = on
+		return nil
+	})
+}
+
 func (a *App) SetNote(id, note string) error {
 	note = safe.Text(note)
 	return a.update(id, "note", note, func(t *store.Task, now int64) error {
